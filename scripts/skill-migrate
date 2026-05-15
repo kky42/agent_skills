@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+manifest="$repo_root/thirdparty-skills.yml"
+lock_file="${XDG_STATE_HOME:-$HOME/.agents}/skills/.skill-lock.json"
+
+if [ -z "${XDG_STATE_HOME:-}" ]; then
+  lock_file="$HOME/.agents/.skill-lock.json"
+fi
+
+if ! command -v npx >/dev/null 2>&1; then
+  echo "npx is required" >&2
+  exit 1
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required" >&2
+  exit 1
+fi
+
+python3 - "$manifest" "$lock_file" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+manifest = Path(sys.argv[1])
+lock_file = Path(sys.argv[2])
+
+agent_name_to_slug = {
+    "Claude Code": "claude-code",
+    "Codex": "codex",
+}
+
+existing = yaml.safe_load(manifest.read_text()) if manifest.exists() else {}
+existing_skills = {
+    item["skill"]: item
+    for item in (existing or {}).get("skills", [])
+    if isinstance(item, dict) and item.get("skill")
+}
+
+locked = {}
+if lock_file.exists():
+    locked = (json.loads(lock_file.read_text()).get("skills") or {})
+
+listed = json.loads(
+    subprocess.run(
+        ["npx", "skills", "ls", "-g", "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+)
+
+listed_agents = {}
+for item in listed:
+    name = item.get("name")
+    if not name:
+        continue
+    agents = []
+    for agent in item.get("agents") or []:
+        slug = agent_name_to_slug.get(agent)
+        if slug and slug not in agents:
+            agents.append(slug)
+    listed_agents[name] = agents
+
+for name, entry in sorted(locked.items()):
+    if name in existing_skills:
+        continue
+    source = entry.get("source")
+    if not source:
+        continue
+    agents = listed_agents.get(name) or ["codex", "claude-code"]
+    existing_skills[name] = {
+        "skill": name,
+        "source": source,
+        "agents": agents,
+    }
+
+output = {
+    "skills": [existing_skills[name] for name in sorted(existing_skills)]
+}
+
+manifest.write_text(yaml.safe_dump(output, sort_keys=False, allow_unicode=True))
+print(f"wrote {len(output['skills'])} third-party skill record(s) to {manifest}")
+PY

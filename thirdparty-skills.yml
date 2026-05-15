@@ -1,0 +1,91 @@
+skills:
+- skill: caveman
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: diagnose
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: grill-me
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: grill-with-docs
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: improve-codebase-architecture
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: opencli-adapter-author
+  source: jackwener/opencli
+  agents:
+  - codex
+  - claude-code
+- skill: opencli-autofix
+  source: jackwener/opencli
+  agents:
+  - codex
+  - claude-code
+- skill: opencli-browser
+  source: jackwener/opencli
+  agents:
+  - codex
+  - claude-code
+- skill: opencli-usage
+  source: jackwener/opencli
+  agents:
+  - codex
+  - claude-code
+- skill: researcher
+  source: krzysztofdudek/ResearcherSkill
+  agents:
+  - codex
+  - claude-code
+- skill: setup-matt-pocock-skills
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: smart-search
+  source: jackwener/opencli
+  agents:
+  - codex
+  - claude-code
+- skill: tdd
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: to-issues
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: to-prd
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: triage
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: write-a-skill
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: zoom-out
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code

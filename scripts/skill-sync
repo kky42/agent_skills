@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+private_skills="$repo_root/skills"
+manifest="$repo_root/thirdparty-skills.yml"
+lock_file="${XDG_STATE_HOME:-$HOME/.agents}/skills/.skill-lock.json"
+default_private_targets="$HOME/.agents/skills:$HOME/.claude/skills"
+
+: "${AGENT_HUB_SKILL_TARGETS:=$default_private_targets}"
+: "${AGENT_HUB_THIRDPARTY_SYNC_SLEEP_SECONDS:=5}"
+
+if [ -z "${XDG_STATE_HOME:-}" ]; then
+  lock_file="$HOME/.agents/.skill-lock.json"
+fi
+
+mkdir -p "$private_skills"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required" >&2
+  exit 1
+fi
+
+python3 - "$private_skills" "$AGENT_HUB_SKILL_TARGETS" <<'PY'
+import os
+import shutil
+import sys
+from pathlib import Path
+
+import yaml
+
+private_root = Path(sys.argv[1]).resolve()
+target_roots = [
+    Path(os.path.expanduser(item)).resolve()
+    for item in sys.argv[2].split(os.pathsep)
+    if item
+]
+legacy_roots = target_roots + [Path.home() / ".pi" / "agent" / "skills"]
+
+
+def under(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def resolve(path: Path) -> Path:
+    return path.resolve(strict=False)
+
+
+def frontmatter_name(skill_md: Path):
+    lines = skill_md.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+
+    body = []
+    for line in lines[1:]:
+        if line.strip() == "---":
+            parsed = yaml.safe_load("\n".join(body)) or {}
+            name = parsed.get("name")
+            return str(name) if name else None
+        body.append(line)
+
+    return None
+
+
+desired = {}
+for skill_md in sorted(private_root.rglob("SKILL.md")):
+    skill_dir = skill_md.parent.resolve()
+    name = skill_dir.name
+
+    if name in desired:
+        raise SystemExit(
+            f"duplicate private skill directory name: {name}\n"
+            f"  {desired[name]}\n"
+            f"  {skill_dir}"
+        )
+
+    declared_name = frontmatter_name(skill_md)
+    if declared_name and declared_name != name:
+        raise SystemExit(
+            f"{skill_md}: frontmatter name {declared_name!r} "
+            f"does not match directory name {name!r}"
+        )
+
+    desired[name] = skill_dir
+
+seen_legacy_roots = set()
+for root in legacy_roots:
+    root = root.resolve()
+    if root in seen_legacy_roots:
+        continue
+    seen_legacy_roots.add(root)
+
+    for legacy_name in ("agent_hub-private", "agent_hub_skills"):
+        legacy_path = root / legacy_name
+        if legacy_path.is_symlink():
+            legacy_path.unlink()
+            print(f"removed legacy private skill link: {legacy_path}", flush=True)
+        elif legacy_path.is_dir():
+            shutil.rmtree(legacy_path)
+            print(f"removed legacy private skill copy: {legacy_path}", flush=True)
+
+for target_root in target_roots:
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    for child in target_root.iterdir():
+        if not child.is_symlink():
+            continue
+
+        linked_target = resolve(child)
+        if not under(linked_target, private_root):
+            continue
+
+        if child.name not in desired or resolve(desired[child.name]) != linked_target:
+            child.unlink()
+            print(f"removed stale private skill link: {child}", flush=True)
+
+    for name, source in sorted(desired.items()):
+        target = target_root / name
+
+        if target.exists() or target.is_symlink():
+            if target.is_symlink():
+                linked_target = resolve(target)
+                if linked_target == resolve(source):
+                    continue
+                if under(linked_target, private_root):
+                    target.unlink()
+                else:
+                    raise SystemExit(
+                        f"error: {target} already exists as an unmanaged symlink "
+                        f"to {os.readlink(target)}"
+                    )
+            else:
+                raise SystemExit(
+                    f"error: {target} already exists and is not an agent_hub symlink"
+                )
+
+        os.symlink(source, target, target_is_directory=True)
+        print(f"linked private skill: {target} -> {source}", flush=True)
+PY
+
+if ! command -v npx >/dev/null 2>&1; then
+  echo "npx is required" >&2
+  exit 1
+fi
+
+python3 - "$manifest" "$lock_file" <<'PY'
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import yaml
+
+manifest = Path(sys.argv[1])
+lock_file = Path(sys.argv[2])
+sleep_seconds = float(os.environ.get("AGENT_HUB_THIRDPARTY_SYNC_SLEEP_SECONDS", "5"))
+
+data = yaml.safe_load(manifest.read_text()) or {}
+skills = data.get("skills") or []
+
+desired = {}
+for item in skills:
+    if not item.get("skill"):
+        raise SystemExit("thirdparty-skills.yml entry is missing skill")
+    if not item.get("source"):
+        raise SystemExit(f"{item['skill']}: missing source")
+    agents = item.get("agents") or []
+    if not agents:
+        raise SystemExit(f"{item['skill']}: missing agents")
+    desired[item["skill"]] = item
+
+lock_data = {"version": 3, "skills": {}}
+locked = {}
+if lock_file.exists():
+    try:
+        lock_data = json.loads(lock_file.read_text())
+        locked = (lock_data.get("skills") or {})
+    except json.JSONDecodeError:
+        raise SystemExit(f"invalid npx skills lock file: {lock_file}")
+
+if not desired and locked:
+    if os.environ.get("AGENT_HUB_CONFIRM_EMPTY_THIRDPARTY") != "1":
+        raise SystemExit(
+            "thirdparty-skills.yml is empty, but npx skills has global skills "
+            "in its lock file. Run ./scripts/skill-migrate first, "
+            "or set AGENT_HUB_CONFIRM_EMPTY_THIRDPARTY=1 to remove all "
+            "npx-managed global skills."
+        )
+
+removed_from_lock = False
+for name in sorted(list(locked)):
+    if name not in desired:
+        print(f"removing stale third-party skill: {name}", flush=True)
+        result = subprocess.run(
+            ["npx", "skills", "remove", name, "-g", "-y"],
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        if result.returncode != 0 and "No matching skills found" not in (result.stdout + result.stderr):
+            raise SystemExit(result.returncode)
+        locked.pop(name, None)
+        removed_from_lock = True
+
+if removed_from_lock:
+    lock_data["skills"] = locked
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_file.write_text(
+        json.dumps(lock_data, indent=2, ensure_ascii=False) + "\n"
+    )
+
+failed_installs = []
+for index, (name, item) in enumerate(sorted(desired.items())):
+    args = ["npx", "skills", "add", item["source"], "-g", "-y"]
+    args += ["--skill", name]
+    if item.get("agents"):
+        args += ["--agent"] + list(item["agents"])
+    if item.get("copy", False):
+        args += ["--copy"]
+    print(f"installing third-party skill: {name}", flush=True)
+    result = subprocess.run(args)
+    if result.returncode != 0:
+        failed_installs.append((name, item["source"], result.returncode))
+        print(
+            f"warning: failed to install third-party skill {name!r} "
+            f"from {item['source']!r}; continuing",
+            file=sys.stderr,
+            flush=True,
+        )
+    if sleep_seconds > 0 and index < len(desired) - 1:
+        time.sleep(sleep_seconds)
+
+if failed_installs:
+    print(
+        "warning: third-party sync completed with failed install/update(s):",
+        file=sys.stderr,
+        flush=True,
+    )
+    for name, source, returncode in failed_installs:
+        print(
+            f"  - {name} from {source} exited with {returncode}",
+            file=sys.stderr,
+            flush=True,
+        )
+PY
