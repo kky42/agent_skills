@@ -30,6 +30,21 @@ session ids, assistant messages, errors, and terminal events explicitly.
 Use [scripts/agent-worker.mjs](scripts/agent-worker.mjs) for normalized runs,
 tmux launch/capture/session display, cleanup, and requested model overrides.
 
+## Worker Preference Order
+
+Pick the worker class from the task, then try candidates in order. If a model
+alias is unavailable, use the next candidate and record the fallback.
+
+- Code/dev/implementation/review: prefer Codex `gpt-5.5` with reasoning
+  `xhigh`; backup Claude Code `deepseek-v4-pro[1m]` with effort `max`.
+- Information gathering/mapping: prefer Codex `gpt-5.4-mini` with reasoning
+  `medium`; backup Claude Code `deepseek-v4-flash[1m]` with effort `high`.
+- Easy/simple/repeated execution: prefer Codex `gpt-5.4-mini` with reasoning
+  `medium`; backup Pi `deepseek/deepseek-v4-flash` with thinking `high`.
+
+Use the task class to choose model strength; use permission mode separately to
+control what the worker may do.
+
 ## Naming Convention
 
 Session names are orchestrator-only labels. They are not passed to the

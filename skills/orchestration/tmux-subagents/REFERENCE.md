@@ -113,6 +113,57 @@ so read-only review is better expressed with plan mode or a narrow tool surface.
 For tmux subagents, prefer `danger-full-access` only for disposable or strongly
 isolated workers after explicit user approval.
 
+### Worker Preference Order
+
+Choose the worker by task class before launch. This is preference order for the
+orchestrator, not context sent to the subagent:
+
+```text
+code/dev/implementation/review:
+  1. codex, model gpt-5.5, reasoning xhigh
+  2. claude, model deepseek-v4-pro[1m], effort max
+
+information gathering/mapping:
+  1. codex, model gpt-5.4-mini, reasoning medium
+  2. claude, model deepseek-v4-flash[1m], effort high
+
+easy/simple/repeated execution:
+  1. codex, model gpt-5.4-mini, reasoning medium
+  2. pi, model deepseek/deepseek-v4-flash, thinking high
+```
+
+If the preferred binary, model alias, or reasoning/effort level is unavailable
+locally, fall back to the next candidate and record the actual worker config in
+the run ledger. Do not let this preference order override permission mode,
+worktree isolation, or user-requested model choices.
+
+Helper examples:
+
+```bash
+# implementation/review
+node skills/orchestration/tmux-subagents/scripts/agent-worker.mjs run \
+  --agent codex --sandbox workspace-write --model gpt-5.5 --reasoning xhigh \
+  --cwd "$WORKTREE" --prompt '<prompt>'
+
+node skills/orchestration/tmux-subagents/scripts/agent-worker.mjs run \
+  --agent claude --sandbox workspace-write --model 'deepseek-v4-pro[1m]' \
+  --reasoning max --cwd "$WORKTREE" --prompt '<prompt>'
+
+# mapping
+node skills/orchestration/tmux-subagents/scripts/agent-worker.mjs run \
+  --agent codex --sandbox read-only --model gpt-5.4-mini --reasoning medium \
+  --cwd "$PWD" --prompt '<prompt>'
+
+node skills/orchestration/tmux-subagents/scripts/agent-worker.mjs run \
+  --agent claude --sandbox read-only --model 'deepseek-v4-flash[1m]' \
+  --reasoning high --cwd "$PWD" --prompt '<prompt>'
+
+# easy/repeated execution
+node skills/orchestration/tmux-subagents/scripts/agent-worker.mjs run \
+  --agent pi --sandbox read-only --model deepseek/deepseek-v4-flash \
+  --reasoning high --cwd "$PWD" --prompt '<prompt>'
+```
+
 ### Session IDs And Permission Changes
 
 Prefer recording a session id for every worker. It lets the orchestrator
@@ -207,6 +258,8 @@ cwd:
 scope:
 status:
 permissions:
+model:
+reasoning:
 session_id:
 started_at:
 last_poll:
