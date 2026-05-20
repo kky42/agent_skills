@@ -6,7 +6,12 @@ private_skills="$repo_root/skills"
 manifest="$repo_root/thirdparty-skills.yml"
 lock_file="${XDG_STATE_HOME:-$HOME/.agents}/skills/.skill-lock.json"
 default_private_targets="$HOME/.agents/skills:$HOME/.claude/skills"
+sync_private=1
 sync_thirdparty=1
+thirdparty_action=sync
+thirdparty_skill=
+personal_only_requested=0
+thirdparty_only_requested=0
 
 : "${AGENT_HUB_SKILL_TARGETS:=$default_private_targets}"
 : "${AGENT_HUB_THIRDPARTY_SYNC_SLEEP_SECONDS:=5}"
@@ -15,18 +20,89 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/skill-sync [--personal-only|--private-only]
+  ./scripts/skill-sync [--thirdparty-only]
+  ./scripts/skill-sync --thirdparty-only --install <skill>
+  ./scripts/skill-sync --thirdparty-only --remove <skill>
 
 Options:
   --personal-only    Link personal skills only; skip third-party npx skills sync.
   --private-only     Alias for --personal-only.
+  --thirdparty-only  Sync third-party skills only; skip personal skill links.
+  --install <skill>  Install/update one third-party skill from the manifest.
+  --remove <skill>   Remove one third-party skill after deleting it from the manifest.
   -h, --help         Show this help.
 EOF
+}
+
+die() {
+  echo "$1" >&2
+  usage >&2
+  exit 1
+}
+
+set_thirdparty_action() {
+  local action="$1"
+  local skill="$2"
+
+  if [ -z "$skill" ]; then
+    die "--$action requires a skill name"
+  fi
+  if [ "$personal_only_requested" -eq 1 ]; then
+    die "--$action cannot be combined with --personal-only"
+  fi
+  if [ "$thirdparty_action" != "sync" ]; then
+    die "only one of --install or --remove may be used"
+  fi
+
+  thirdparty_action="$action"
+  thirdparty_skill="$skill"
+  sync_private=0
+  sync_thirdparty=1
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --personal-only|--private-only)
+      if [ "$thirdparty_only_requested" -eq 1 ]; then
+        die "--personal-only cannot be combined with --thirdparty-only"
+      fi
+      if [ "$thirdparty_action" != "sync" ]; then
+        die "--personal-only cannot be combined with --$thirdparty_action"
+      fi
+      personal_only_requested=1
+      sync_private=1
       sync_thirdparty=0
+      shift
+      ;;
+    --thirdparty-only)
+      if [ "$personal_only_requested" -eq 1 ]; then
+        die "--thirdparty-only cannot be combined with --personal-only"
+      fi
+      thirdparty_only_requested=1
+      sync_private=0
+      sync_thirdparty=1
+      shift
+      ;;
+    --install)
+      if [ "$#" -lt 2 ]; then
+        die "--install requires a skill name"
+      fi
+      set_thirdparty_action install "$2"
+      shift 2
+      ;;
+    --install=*)
+      set_thirdparty_action install "${1#--install=}"
+      shift
+      ;;
+    --remove)
+      if [ "$#" -lt 2 ]; then
+        die "--remove requires a skill name"
+      fi
+      set_thirdparty_action remove "$2"
+      shift 2
+      ;;
+    --remove=*)
+      set_thirdparty_action remove "${1#--remove=}"
       shift
       ;;
     -h|--help)
@@ -41,6 +117,10 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$thirdparty_action" != "sync" ] && [ "$thirdparty_only_requested" -ne 1 ]; then
+  die "--install and --remove require --thirdparty-only"
+fi
+
 if [ -z "${XDG_STATE_HOME:-}" ]; then
   lock_file="$HOME/.agents/.skill-lock.json"
 fi
@@ -52,6 +132,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ "$sync_private" -eq 1 ]; then
 python3 - "$private_skills" "$AGENT_HUB_SKILL_TARGETS" <<'PY'
 import os
 import shutil
@@ -180,6 +261,9 @@ for target_root in target_roots:
         os.symlink(source, target, target_is_directory=True)
         print(f"linked private skill: {target} -> {source}", flush=True)
 PY
+else
+  echo "skipped personal skill sync"
+fi
 
 if [ "$sync_thirdparty" -eq 0 ]; then
   echo "skipped third-party skill sync"
@@ -191,7 +275,7 @@ if ! command -v npx >/dev/null 2>&1; then
   exit 1
 fi
 
-python3 - "$manifest" "$lock_file" <<'PY'
+python3 - "$manifest" "$lock_file" "$thirdparty_action" "$thirdparty_skill" <<'PY'
 import json
 import os
 import subprocess
@@ -201,6 +285,8 @@ from pathlib import Path
 
 manifest = Path(sys.argv[1])
 lock_file = Path(sys.argv[2])
+action = sys.argv[3]
+target_skill = sys.argv[4]
 sleep_seconds = float(os.environ.get("AGENT_HUB_THIRDPARTY_SYNC_SLEEP_SECONDS", "5"))
 
 def clean_scalar(value: str):
@@ -285,6 +371,72 @@ if lock_file.exists():
     except json.JSONDecodeError:
         raise SystemExit(f"invalid npx skills lock file: {lock_file}")
 
+def save_lock():
+    lock_data["skills"] = locked
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_file.write_text(
+        json.dumps(lock_data, indent=2, ensure_ascii=False) + "\n"
+    )
+
+
+def run_remove(name: str, stale: bool = False):
+    if stale:
+        print(f"removing stale third-party skill: {name}", flush=True)
+    else:
+        print(f"removing third-party skill: {name}", flush=True)
+
+    result = subprocess.run(
+        ["npx", "skills", "remove", name, "-g", "-y"],
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    if result.returncode != 0 and "No matching skills found" not in (result.stdout + result.stderr):
+        raise SystemExit(result.returncode)
+
+    removed_from_lock = name in locked
+    locked.pop(name, None)
+    return removed_from_lock
+
+
+def install_args(name: str, item: dict):
+    args = ["npx", "skills", "add", item["source"], "-g", "-y"]
+    args += ["--skill", name]
+    if item.get("agents"):
+        args += ["--agent"] + list(item["agents"])
+    if item.get("copy", False):
+        args += ["--copy"]
+    return args
+
+
+def run_install(name: str, item: dict):
+    print(f"installing third-party skill: {name}", flush=True)
+    return subprocess.run(install_args(name, item)).returncode
+
+
+if action == "install":
+    if target_skill not in desired:
+        raise SystemExit(
+            f"{target_skill}: not found in thirdparty-skills.yml; "
+            "add the manifest entry before running --install"
+        )
+
+    raise SystemExit(run_install(target_skill, desired[target_skill]))
+
+if action == "remove":
+    if target_skill in desired:
+        raise SystemExit(
+            f"{target_skill}: still listed in thirdparty-skills.yml; "
+            "remove the manifest entry before running --remove"
+        )
+
+    if run_remove(target_skill):
+        save_lock()
+    raise SystemExit(0)
+
 if not desired and locked:
     if os.environ.get("AGENT_HUB_CONFIRM_EMPTY_THIRDPARTY") != "1":
         raise SystemExit(
@@ -297,40 +449,17 @@ if not desired and locked:
 removed_from_lock = False
 for name in sorted(list(locked)):
     if name not in desired:
-        print(f"removing stale third-party skill: {name}", flush=True)
-        result = subprocess.run(
-            ["npx", "skills", "remove", name, "-g", "-y"],
-            capture_output=True,
-            text=True,
-        )
-        if result.stdout:
-            print(result.stdout, end="")
-        if result.stderr:
-            print(result.stderr, end="", file=sys.stderr)
-        if result.returncode != 0 and "No matching skills found" not in (result.stdout + result.stderr):
-            raise SystemExit(result.returncode)
-        locked.pop(name, None)
-        removed_from_lock = True
+        if run_remove(name, stale=True):
+            removed_from_lock = True
 
 if removed_from_lock:
-    lock_data["skills"] = locked
-    lock_file.parent.mkdir(parents=True, exist_ok=True)
-    lock_file.write_text(
-        json.dumps(lock_data, indent=2, ensure_ascii=False) + "\n"
-    )
+    save_lock()
 
 failed_installs = []
 for index, (name, item) in enumerate(sorted(desired.items())):
-    args = ["npx", "skills", "add", item["source"], "-g", "-y"]
-    args += ["--skill", name]
-    if item.get("agents"):
-        args += ["--agent"] + list(item["agents"])
-    if item.get("copy", False):
-        args += ["--copy"]
-    print(f"installing third-party skill: {name}", flush=True)
-    result = subprocess.run(args)
-    if result.returncode != 0:
-        failed_installs.append((name, item["source"], result.returncode))
+    returncode = run_install(name, item)
+    if returncode != 0:
+        failed_installs.append((name, item["source"], returncode))
         print(
             f"warning: failed to install third-party skill {name!r} "
             f"from {item['source']!r}; continuing",

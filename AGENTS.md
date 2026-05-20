@@ -77,6 +77,18 @@ For personal/private skill changes only, run:
 
 This links private skills and skips the slower third-party `npx skills` phase.
 
+For a single third-party change, prefer targeted third-party sync:
+
+```bash
+./scripts/skill-sync --thirdparty-only --install <skill>
+./scripts/skill-sync --thirdparty-only --remove <skill>
+```
+
+Targeted third-party sync skips private-skill linking and only touches the named
+third-party skill. Full `./scripts/skill-sync` remains the machine reconcile
+operation: it refreshes private links, removes stale third-party skills, and
+installs or updates every manifest entry.
+
 ### Add A Private Skill
 
 1. Create a directory under `skills/`.
@@ -128,7 +140,7 @@ repo are removed. Real folders and unmanaged symlinks are not removed.
 3. Run:
 
    ```bash
-   ./scripts/skill-sync
+   ./scripts/skill-sync --thirdparty-only --install example-skill
    ```
 
 Use `skill` as the real skill name. Do not invent a separate local name.
@@ -138,11 +150,12 @@ Use `skill` as the real skill name. Do not invent a separate local name.
 Remove its entry from `thirdparty-skills.yml`, then run:
 
 ```bash
-./scripts/skill-sync
+./scripts/skill-sync --thirdparty-only --remove <skill>
 ```
 
-The script removes stale npx-managed global skills by comparing
-`thirdparty-skills.yml` with `npx skills`' global lock file.
+Targeted remove requires the skill to be absent from `thirdparty-skills.yml`.
+Full `./scripts/skill-sync` also removes stale npx-managed global skills by
+comparing `thirdparty-skills.yml` with `npx skills`' global lock file.
 
 ### Sync Another Computer
 

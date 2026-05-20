@@ -39,14 +39,16 @@ linked skill are visible immediately; run `skill-sync` after adding, removing,
 or renaming skill folders. Use `--personal-only` when you do not want to spend
 time refreshing third-party skills.
 
-For third-party skills, update `thirdparty-skills.yml` first, then run:
+For one third-party skill, update `thirdparty-skills.yml` first, then run a
+targeted sync:
 
 ```bash
-./scripts/skill-sync
+./scripts/skill-sync --thirdparty-only --install web-design-guidelines
 ```
 
 Use `npx skills add <source> --list` only for discovery. The YAML file is the
-source of truth for add/remove decisions.
+source of truth for add/remove decisions. `--install` installs or updates only
+the named skill from the manifest.
 
 Example:
 
@@ -59,7 +61,16 @@ skills:
       - claude-code
 ```
 
-To remove a third-party skill, delete its YAML entry and run `skill-sync`.
+To remove a third-party skill, delete its YAML entry, then run:
+
+```bash
+./scripts/skill-sync --thirdparty-only --remove web-design-guidelines
+```
+
+Use the full `./scripts/skill-sync` when setting up a machine or intentionally
+reconciling every third-party skill. It removes any stale npx-managed skills and
+refreshes the full manifest.
+
 If an upstream skill disappears, `skill-sync` warns and continues with the rest
 of the manifest.
 
