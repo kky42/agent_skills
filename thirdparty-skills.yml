@@ -14,6 +14,11 @@ skills:
   agents:
   - codex
   - claude-code
+- skill: handoff
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
 - skill: grill-with-docs
   source: mattpocock/skills
   agents:
