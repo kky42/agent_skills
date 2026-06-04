@@ -48,6 +48,21 @@ Worker `done` means finished and awaiting operator review. It is not accepted.
 - Poll with `status` or `harvest`; inspect logs only when ambiguous.
 - Verify worker results yourself before `accept` or `reject`.
 - Use `close-stale` and `archive-task` to keep active boards small.
+- Prefer `status --active-only` for day-to-day scanning; closed and
+  `worker_done` tasks accumulate and make full `status` output noisy.
+  Use `close-stale` and `archive-task` after each wave to keep the
+  active view compact.
+- After a wave with many verified tasks, batch-close them in one pass
+  rather than one-at-a-time. Use `close-wave` or batch `accept`/`reject`
+  when available.
+- When `status` shows tasks as `worker_done` but runs still appear
+  `running`, trust task status over run state. Run state can lag after
+  transport loss; task status reflects the known outcome.
+- Before spawning a worker, verify the worker can write to the kanban DB.
+  Fail fast at spawn time with a clear operator hint if DB writes are
+  blocked, rather than letting the worker discover it mid-run.
+- Prefer `harvest --active-only` or `harvest --wave <name>` for routine
+  review. `harvest --all` is for full audits, not day-to-day scanning.
 
 ## Worker Contract
 
@@ -64,5 +79,19 @@ CHANGED_FILES: <paths or none>
 TESTS: <commands run or not run>
 NEXT: <needed follow-up or none>
 ```
+
+## Reviewing Runs
+
+- A worker's final marker (`STATUS: done|blocked|failed`) is the source of
+  truth. Transport errors (reconnects, stream drops) that do not prevent the
+  final marker are not worker failures. Distinguish transport noise from
+  actual worker contract success.
+- When reviewing a run, separate recovered tool errors (worker continued and
+  produced a valid marker) from terminal failures. A run that recovers and
+  finishes `done` is a success, even if individual tool calls hit transient
+  errors.
+- If a worker dies before emitting the final marker, inspect the raw run
+  directory for results. Harvest should still surface changed-files and
+  artifact hints from the event log when the marker is missing.
 
 For command details and design notes, see [REFERENCE.md](REFERENCE.md).

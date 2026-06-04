@@ -19,6 +19,11 @@ dataset create/version actions are allowed when they are part of the requested
 objective. Record source, command, timestamp, artifact path, and feedback for
 any external Kaggle action.
 
+After recording a leaderboard result, refresh the competition context and
+verify no stale blockers remain before the next cycle. A completed submission
+can be the current best while cached context still tells the next agent to
+verify it.
+
 ## Core Kaggle Principles
 
 - Optimize for private leaderboard performance; public LB is evidence, not

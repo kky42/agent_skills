@@ -42,6 +42,10 @@ Reusable Kaggle operating loop for new or active competitions.
   not to rank many close variants.
 - When ensembling, value diversity backed by validation disagreement analysis,
   not just public score stacking.
+- For cost-gated tasks (runtime, memory, parameter limits), rank by frontier
+  value, not raw score alone. A candidate that saves memory or parameter count
+  while crossing a score threshold can be more valuable than one with a
+  marginally higher score that consumes the full budget.
 
 ## 6. Finalize Conservatively
 
