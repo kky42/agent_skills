@@ -13,6 +13,7 @@ If Kaggle is installed with uv, keep the CLI on PATH:
 
 ```bash
 uv tool install kaggle
+uv tool upgrade kaggle
 uv tool list | rg '^kaggle '
 ```
 
@@ -40,3 +41,10 @@ a default.
 
 Record the CLI version, user-visible competition slug, and command used when a
 Kaggle action matters for reproducibility.
+
+Check accelerator availability before planning GPU/TPU notebook work:
+
+```bash
+kaggle quota
+kaggle quota --csv
+```

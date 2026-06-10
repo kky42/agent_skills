@@ -1,7 +1,7 @@
 # `disc_get.py`
 
-Fetch one discussion page and its visible comments. Use this when comments are
-needed; the Kaggle CLI does not provide discussion comments.
+Fetch one discussion page and its visible comments with preserved raw metadata.
+Use `refs/cli/discussions.md` first for ordinary discussion browsing.
 
 ```bash
 python .agents/skills/datascience/kaggle/scripts/disc_get.py \

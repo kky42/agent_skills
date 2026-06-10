@@ -10,15 +10,23 @@ kaggle kernels list --competition SLUG --page-size N --sort-by voteCount --csv
 kaggle kernels list --competition SLUG --page-size N --sort-by commentCount --csv
 kaggle kernels list --competition SLUG --page-size N --sort-by scoreDescending --csv
 kaggle kernels pull OWNER/KERNEL -p PATH -m
+kaggle kernels pull OWNER/KERNEL/VERSION -p PATH -m
 kaggle kernels output OWNER/KERNEL -p PATH -o
+kaggle kernels output OWNER/KERNEL/VERSION -p PATH -o
 kaggle kernels init -p NOTEBOOK_DIR
 kaggle kernels push -p NOTEBOOK_DIR
 kaggle kernels status OWNER/KERNEL
+kaggle kernels logs OWNER/KERNEL
 ```
 
 `scoreDescending` sorts by current notebook score, but the CSV output may omit
 the score value. Cross-check visible score signals in the notebook title, page
 metadata, oEmbed, output logs, or notebook text.
+
+Use `OWNER/KERNEL/VERSION` when a specific notebook version matters. Otherwise
+the CLI uses the latest accessible version. Use `kaggle kernels logs` to capture
+run logs for provenance or failed notebook runs; add `--follow` only while
+actively monitoring a running kernel.
 
 Top-voted notebooks:
 

@@ -1,7 +1,7 @@
 # `disc_list.py`
 
-List competition discussion topics with filters that Kaggle CLI does not
-provide.
+List competition discussion topics with metadata that the Kaggle CLI may omit.
+Use `refs/cli/discussions.md` first for ordinary discussion browsing.
 
 ```bash
 python .agents/skills/datascience/kaggle/scripts/disc_list.py \

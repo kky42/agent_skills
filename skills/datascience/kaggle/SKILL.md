@@ -45,6 +45,8 @@ CLI-only operations:
 - Submit and check feedback: `refs/cli/submit.md`
 - List/pull/publish notebook source/output: `refs/cli/notebooks.md`
 - Create/version datasets: `refs/cli/datasets.md`
+- Browse discussion topics/comments with official CLI support:
+  `refs/cli/discussions.md`
 
 Script-backed operations, only where the Kaggle CLI is insufficient:
 
@@ -52,8 +54,9 @@ Script-backed operations, only where the Kaggle CLI is insufficient:
 - Competition page sections: `refs/scripts/comp_page.md`
 - Notebook search snapshots: `refs/scripts/nb_list.md`
 - Notebook version artifact download: `refs/scripts/nb_download.md`
-- Discussion topic list/filter: `refs/scripts/disc_list.md`
-- Discussion comments: `refs/scripts/disc_get.md`
+- Discussion topic list/filter with preserved raw metadata:
+  `refs/scripts/disc_list.md`
+- Discussion comments with preserved raw metadata: `refs/scripts/disc_get.md`
 - Notebook official/pinned flags: `refs/scripts/nb_flags.md`
 - Notebook version/score updates: `refs/scripts/nb_versions.md`
 
