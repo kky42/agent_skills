@@ -192,24 +192,92 @@ def text_from_competition(meta: dict[str, Any]) -> str:
     return "\n".join(f"{name}: {value}" for name, value in fields if value not in (None, ""))
 
 
+SECTION_ALIASES = {
+    "overview": ("overview", "description", "summary"),
+    "data": ("data", "data-description"),
+    "rules": ("rule", "rules"),
+    "leaderboard": ("leaderboard",),
+    "submissions": ("submission", "submissions"),
+    "team": ("team", "teams"),
+    "code": ("code", "kernel", "notebook"),
+    "models": ("model", "models"),
+    "discussion": ("discussion", "forum"),
+}
+
+# Reading order for the sibling pages that make up the Overview tab. Names are
+# matched as case-insensitive substrings; unknown pages sort after these in
+# their original API order.
+OVERVIEW_PAGE_ORDER = (
+    "abstract",
+    "subtitle",
+    "description",
+    "what makes this different",
+    "getting started",
+    "evaluation",
+    "timeline",
+    "code requirements",
+    "prizes",
+    "citation",
+    "acknowledg",
+    "frequently asked",
+    "faq",
+)
+
+
 def page_for_section(section: str, pages: list[dict[str, Any]]) -> dict[str, Any] | None:
-    aliases = {
-        "overview": ("overview", "description", "summary"),
-        "data": ("data", "data-description"),
-        "rules": ("rule", "rules"),
-        "leaderboard": ("leaderboard",),
-        "submissions": ("submission", "submissions"),
-        "team": ("team", "teams"),
-        "code": ("code", "kernel", "notebook"),
-        "models": ("model", "models"),
-        "discussion": ("discussion", "forum"),
-    }
-    needles = aliases.get(section, (section,))
+    needles = SECTION_ALIASES.get(section, (section,))
     for page in pages:
         name = str(page.get("name") or "").lower()
         if any(needle in name for needle in needles):
             return page
     return None
+
+
+def overview_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return every page belonging to the Overview tab, in reading order.
+
+    The Kaggle Overview tab is composed of several sibling pages (Description,
+    What Makes This Different, Getting Started, Evaluation, Timeline, Code
+    Requirements, Prizes, abstract, ...). Only the Data and Rules tabs own
+    dedicated content pages, so we exclude those two and treat everything else
+    as Overview content. (Pages like "Code Requirements" deliberately stay in
+    Overview even though their name brushes against other section aliases.)
+    """
+    exclude_ids: set[Any] = set()
+    for section in ("data", "rules"):
+        page = page_for_section(section, pages)
+        if page and page.get("id") is not None:
+            exclude_ids.add(page["id"])
+    selected = [p for p in pages if p.get("id") not in exclude_ids]
+
+    def order_key(page: dict[str, Any]) -> int:
+        name = str(page.get("name") or "").lower()
+        for index, needle in enumerate(OVERVIEW_PAGE_ORDER):
+            if needle in name:
+                return index
+        return len(OVERVIEW_PAGE_ORDER)
+
+    return sorted(selected, key=order_key)
+
+
+def pages_to_markdown(section_pages: list[dict[str, Any]], with_headers: bool) -> str:
+    """Join page bodies into clean markdown without collapsing whitespace.
+
+    Unlike the flat ``text`` field, this preserves the original page markdown
+    (tables, code fences, lists). For multi-page sections each page body is
+    introduced by a ``## <page name>`` header.
+    """
+    parts: list[str] = []
+    for page in section_pages:
+        content = str(page.get("content") or "").strip()
+        if not content:
+            continue
+        name = str(page.get("name") or "").strip()
+        if with_headers and name:
+            parts.append(f"## {name}\n\n{content}")
+        else:
+            parts.append(content)
+    return "\n\n".join(parts)
 
 
 def render_md(record: dict[str, Any]) -> str:
@@ -220,7 +288,8 @@ def render_md(record: dict[str, Any]) -> str:
             lines.extend([f"Title: {section['title']}", ""])
         if section.get("error"):
             lines.extend([f"Error: {section['error']}", ""])
-        lines.extend([section.get("text") or "", ""])
+        # Prefer the clean page markdown; fall back to the flat text scrape.
+        lines.extend([section.get("markdown") or section.get("text") or "", ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -273,7 +342,9 @@ def main() -> int:
             {"competitionId": comp_meta["id"]},
             args.timeout,
         )
-        record["api"]["pages"] = {"status": pages_status, "error": pages_error}
+        # Keep the raw ListPages payload: the Overview tab spans several pages
+        # and dropping it silently loses Evaluation/Timeline/Prizes content.
+        record["api"]["pages"] = {"status": pages_status, "error": pages_error, "data": pages_meta}
         if isinstance(pages_meta, dict) and isinstance(pages_meta.get("pages"), list):
             pages = pages_meta["pages"]
     for name, suffix in SECTIONS.items():
@@ -282,9 +353,17 @@ def main() -> int:
         text_parts = [visible_text(source)]
         for block in json_blocks(source):
             text_parts.extend(iter_strings(block))
-        page = page_for_section(name, pages)
-        if page and page.get("content"):
-            text_parts.insert(0, str(page["content"]))
+        # Overview aggregates all of its sibling pages; every other section maps
+        # to at most one page.
+        if name == "overview":
+            section_pages = overview_pages(pages)
+        else:
+            page = page_for_section(name, pages)
+            section_pages = [page] if page else []
+        primary = section_pages[0] if section_pages else None
+        markdown = pages_to_markdown(section_pages, with_headers=(name == "overview"))
+        if markdown:
+            text_parts.insert(0, markdown)
         if name == "overview" and comp_meta:
             text_parts.insert(0, text_from_competition(comp_meta))
         record["sections"][name] = {
@@ -292,8 +371,10 @@ def main() -> int:
             "status": status,
             "title": page_title(source),
             "error": error,
-            "page_id": page.get("id") if page else None,
-            "page_name": page.get("name") if page else None,
+            "page_id": primary.get("id") if primary else None,
+            "page_name": primary.get("name") if primary else None,
+            "page_names": [p.get("name") for p in section_pages],
+            "markdown": markdown,
             "text": dedupe_join(text_parts),
         }
     record["brief"] = {
