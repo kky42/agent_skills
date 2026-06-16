@@ -2,6 +2,22 @@
 
 Validation is a model of the private leaderboard, not a convenience split.
 
+## Evaluation Contract
+
+- Capture the public/private leaderboard split ratio. A tiny public slice can be
+  a poor proxy for private performance; expect rank shakeups and rely more on
+  local validation, robust slices, and conservative final selection.
+- Identify how the hidden test is split or generated: random, grouped,
+  chronological/future-period, arena-style, interactive, filtered, or otherwise
+  distribution-shifted. Mirror the dangerous split mechanism locally when
+  possible.
+- Read the exact metric implementation and its edge cases before modeling.
+  Report validation with the competition metric, design training losses or
+  surrogates that align with it, and focus error analysis on the terms that
+  most affect final score.
+- Treat daily submission limits as a scarce calibration budget, not an inner
+  loop. Decide what each LB probe is meant to learn before submitting.
+
 ## Hidden-Test Threat Model
 
 Ask what mechanism could make public/local examples easier than private:
@@ -26,6 +42,19 @@ fewer folds or noisier scores.
 - Public LB validation: low-frequency external check for severe mismatch.
 - Post-submission audit: compare expected local score movement with public LB
   movement and update the threat model.
+
+## Calibration
+
+- Build the local evaluation pipeline from the beginning; do not wait for model
+  complexity before validating the metric, split, and submission path.
+- Track local validation and public LB as paired observations for submitted
+  candidates. Correlation and rank preservation usually matter more than the
+  absolute score gap.
+- Recalibrate periodically after data, features, model family, post-processing,
+  or public discussion evidence changes the threat model.
+- If local/LB pairing shows weak correlation, frequent rank inversions, or
+  plausible public-overfit behavior, revise splits, slice weights, metric
+  implementation, or candidate selection before spending more submissions.
 
 ## Leakage Discipline
 

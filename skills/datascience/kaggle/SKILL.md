@@ -28,11 +28,17 @@ verify it.
 
 - Optimize for private leaderboard performance; public LB is evidence, not
   truth.
+- Treat evaluation design as the central artifact: public/private split,
+  hidden-test construction, metric behavior, and submission budget drive the
+  whole workflow.
 - Start from official rules, metric, data, runtime, and submission contract.
 - Build trustworthy validation before adding capacity.
+- Keep the training/evaluation loop fast, cheap, calibrated, and reproducible
+  so more ideas can be tested without burning submissions.
 - Label leakage risk for public notebooks, discussions, features, and artifacts.
 - Prefer robust, reproducible candidates over brittle public-LB tuning.
-- Record provenance for data, code, configs, seeds, artifacts, and submissions.
+- Record provenance, hypothesis, local score, optional LB score, configs, seeds,
+  artifacts, and decisions for every candidate.
 
 ## Router
 

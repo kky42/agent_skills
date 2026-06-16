@@ -5,8 +5,10 @@ Kaggle work needs enough provenance to explain and rebuild a submitted artifact.
 ## Identity
 
 - Give every candidate a deterministic identity from stable inputs: data
-  version, code/config version, model family, seed/fold, and post-processing
-  variant.
+  version, code/config version, fixed split/fold definition, model family,
+  model-specific seed, and post-processing variant.
+- Pin every randomness source that affects comparison: folds, initialization,
+  dataloading, augmentation, sampling, pseudo-label selection, and ensembling.
 - Do not silently mutate a candidate after it has been evaluated or submitted.
   Create a new identity for behavior changes.
 - Keep human-friendly names, but rely on machine-checkable fingerprints for
@@ -18,16 +20,21 @@ Track enough to answer:
 
 - What data and external sources were used?
 - Which code, config, seed, folds, and environment produced the artifact?
-- Which validation views were run and what failed?
-- Was public LB used to tune or select it?
-- Which final submission included it?
+- What hypothesis or bottleneck was this candidate testing?
+- Which params, thresholds, feature switches, and post-processing choices were
+  used?
+- Which validation views were run, what local scores resulted, and what failed?
+- Was public LB used to tune, calibrate, or select it? If yes, what score and
+  submission id?
+- Which final submission included it and why was it accepted or rejected?
 
 For long-running agentic search, keep compact machine-readable indexes in
 addition to human notes:
 
-- one candidate trace row per attempted candidate, including commit/config id,
-  proxy score, real score when available, status, relation to baseline/best,
-  and copied artifact references;
+- one candidate trace row per attempted candidate, including hypothesis,
+  changed variable, commit/config id, params summary, local/proxy score, LB/real
+  score when available, status, relation to baseline/best, and copied artifact
+  references;
 - flattened scalar artifact fields for model/config/validation diagnostics, not
   large prediction arrays or full logs;
 - aggregate summaries of repeated field values, tied-score plateaus, recurring

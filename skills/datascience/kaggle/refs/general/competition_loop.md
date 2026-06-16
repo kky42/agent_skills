@@ -5,12 +5,13 @@ Reusable Kaggle operating loop for new or active competitions.
 ## 1. Read The Contract
 
 - Identify the metric, target, prediction unit, submission schema, rules, data
-  access boundaries, external-data policy, inference/runtime limits, and final
-  evaluation split.
+  access boundaries, external-data policy, inference/runtime limits, public vs
+  private leaderboard split ratio, and final evaluation split strategy.
 - Locate official starter code or host metric code. Treat it as the scoring
   contract when it conflicts with informal descriptions.
 - Write down what can differ between local validation, public LB, and private
-  LB before modeling.
+  LB before modeling, especially when the hidden test is time-shifted,
+  source-shifted, arena-style, interactive, or built from a tiny public slice.
 
 ## 2. Build A Baseline That Teaches
 
@@ -29,8 +30,15 @@ Reusable Kaggle operating loop for new or active competitions.
 
 ## 4. Iterate With Evidence
 
+- Make the inner loop fast before exploring many ideas: cache reusable data,
+  features, embeddings, folds, out-of-fold predictions, and intermediate
+  artifacts; invalidate caches explicitly when their inputs change.
+- Parallelize computation-heavy pipeline nodes and keep both a cheap smoke
+  evaluation and the slower trusted evaluation available.
 - Change one meaningful variable at a time when learning.
 - Separate model-quality experiments from pipeline or data-fix experiments.
+- Record the hypothesis, changed variable, local score, optional LB score,
+  config/params, seeds, artifact path, and decision for each candidate.
 - Preserve failed experiments when they falsify a hypothesis that future work
   might otherwise repeat.
 
