@@ -1,10 +1,5 @@
 skills:
-- skill: caveman
-  source: mattpocock/skills
-  agents:
-  - codex
-  - claude-code
-- skill: diagnose
+- skill: diagnosing-bugs
   source: mattpocock/skills
   agents:
   - codex
@@ -64,6 +59,11 @@ skills:
   agents:
   - codex
   - claude-code
+- skill: smart-search
+  source: jackwener/opencli
+  agents:
+  - codex
+  - claude-code
 - skill: researcher
   source: krzysztofdudek/ResearcherSkill
   agents:
@@ -94,12 +94,7 @@ skills:
   agents:
   - codex
   - claude-code
-- skill: write-a-skill
-  source: mattpocock/skills
-  agents:
-  - codex
-  - claude-code
-- skill: zoom-out
+- skill: writing-great-skills
   source: mattpocock/skills
   agents:
   - codex
