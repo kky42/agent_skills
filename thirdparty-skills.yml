@@ -89,3 +89,48 @@ skills:
   agents:
   - codex
   - claude-code
+- skill: ask-matt
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: grilling
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: domain-modeling
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: codebase-design
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: code-review
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: research
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: implement
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: resolving-merge-conflicts
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
+- skill: teach
+  source: mattpocock/skills
+  agents:
+  - codex
+  - claude-code
