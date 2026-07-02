@@ -66,6 +66,10 @@ Script-backed operations, only where the Kaggle CLI is insufficient:
   author names, votes, dates): `refs/scripts/disc_get.md`
 - Notebook official/pinned flags: `refs/scripts/nb_flags.md`
 - Notebook version/score updates: `refs/scripts/nb_versions.md`
+- NVIDIA-derived helpers for writeups, public kernel score/version archives,
+  Rich discussion/kernel SQLite browsing, submission quota checks,
+  code-competition kernel submission polling, dataset uploads, and local kernel
+  reproduction: `refs/scripts/nvidia.md`
 
 Browser-backed operations (requires OpenCLI, see `refs/opencli-setup.md`):
 
@@ -93,6 +97,13 @@ in the main context.
 Methodology:
 
 - General Kaggle principles: `refs/general/README.md`
+- Competition strategy briefs with citations, score ladders, and honest plots:
+  `refs/general/research_brief.md`
+
+External resources for future maintenance:
+
+- NVIDIA nvidia-kaggle upstream and merged snapshot notes:
+  `refs/nvidia-kaggle.md`
 
 ## Update Boundary
 
@@ -121,6 +132,8 @@ Examples that belong in the repo:
 - Add scripts only for scraping, comment extraction, official/pinned detection,
   or structured aggregation that the CLI cannot reliably do.
 - Keep scripts independent and single-purpose.
+- Keep vendored external helpers namespaced under their source directory and
+  preserve license attribution.
 - Add lessons to the narrowest existing reference file when possible.
 - Add a new subfolder only for a reusable Kaggle methodology area that does not
   fit the current second-layer index.

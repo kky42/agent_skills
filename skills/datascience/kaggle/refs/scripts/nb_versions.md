@@ -5,7 +5,7 @@ CLI can list current notebooks, pull source, and download latest output, but it
 does not expose complete version/LB history.
 
 ```bash
-python3 .agents/skills/datascience/kaggle/scripts/nb_versions.py \
+python3 $HOME/.agents/skills/kaggle/scripts/nb_versions.py \
   --notebook OWNER/KERNEL \
   --out PATH
 ```

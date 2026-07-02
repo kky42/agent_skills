@@ -35,6 +35,14 @@ uv run --with kaggle python script.py
 If credentials are missing, create or place `kaggle.json` where the CLI expects
 it, usually `~/.kaggle/kaggle.json`, or set `KAGGLE_CONFIG_DIR`.
 
+Some NVIDIA-derived helpers use Kaggle internal APIs and require a KGAT bearer
+token in `KAGGLE_API_TOKEN`, even when the normal CLI is authenticated. Check
+for it without printing the secret:
+
+```bash
+: "${KAGGLE_API_TOKEN:?KAGGLE_API_TOKEN is required for this helper}"
+```
+
 For competition-scoped work, prefer passing `-c SLUG` explicitly. Use
 `kaggle config set competition SLUG` only when a workflow clearly benefits from
 a default.

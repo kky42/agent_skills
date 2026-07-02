@@ -3,7 +3,7 @@
 Fetch competition page sections that the Kaggle CLI does not expose.
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/comp_page.py \
+python $HOME/.agents/skills/kaggle/scripts/comp_page.py \
   --competition SLUG \
   --format json \
   --out PATH

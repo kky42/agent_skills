@@ -8,10 +8,14 @@ The default cache root is the current working directory:
 .kaggle-skill/cache/
 ```
 
+NVIDIA-derived SQLite helpers also use this root, under
+`.kaggle-skill/cache/nvidia/`, to avoid creating unrelated `data/` folders in
+competition repos.
+
 Initialize it at the start of a competition repo and keep it out of git:
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/cache.py init --write-gitignore
+python $HOME/.agents/skills/kaggle/scripts/cache.py init --write-gitignore
 ```
 
 Use this cache for daily Kaggle routine work when fresh remote data is not
@@ -22,14 +26,14 @@ needed, and refresh it manually when the user asks.
 Competition overview/data/rules:
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/cache.py refresh competition \
+python $HOME/.agents/skills/kaggle/scripts/cache.py refresh competition \
   --competition SLUG
 ```
 
 Discussion topics, optionally with visible comments:
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/cache.py refresh discussions \
+python $HOME/.agents/skills/kaggle/scripts/cache.py refresh discussions \
   --competition SLUG \
   --sort recent \
   --limit 50 \
@@ -39,7 +43,7 @@ python .agents/skills/datascience/kaggle/scripts/cache.py refresh discussions \
 Notebook list snapshots:
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/cache.py refresh notebooks \
+python $HOME/.agents/skills/kaggle/scripts/cache.py refresh notebooks \
   --competition SLUG \
   --sort dateRun \
   --sort voteCount \
@@ -51,7 +55,7 @@ python .agents/skills/datascience/kaggle/scripts/cache.py refresh notebooks \
 One notebook's version/update metadata:
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/cache.py refresh notebook-versions \
+python $HOME/.agents/skills/kaggle/scripts/cache.py refresh notebook-versions \
   --competition SLUG \
   --notebook OWNER/KERNEL
 ```
@@ -59,7 +63,7 @@ python .agents/skills/datascience/kaggle/scripts/cache.py refresh notebook-versi
 Submissions:
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/cache.py refresh submissions \
+python $HOME/.agents/skills/kaggle/scripts/cache.py refresh submissions \
   --competition SLUG \
   --page-size 100
 ```
@@ -67,7 +71,7 @@ python .agents/skills/datascience/kaggle/scripts/cache.py refresh submissions \
 Routine all-in-one refresh:
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/cache.py refresh all \
+python $HOME/.agents/skills/kaggle/scripts/cache.py refresh all \
   --competition SLUG \
   --comments \
   --with-meta
@@ -78,16 +82,16 @@ python .agents/skills/datascience/kaggle/scripts/cache.py refresh all \
 Search defaults to `index.sqlite` under the cache root:
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/cache.py search \
+python $HOME/.agents/skills/kaggle/scripts/cache.py search \
   --competition SLUG \
   "eval update"
 
-python .agents/skills/datascience/kaggle/scripts/cache.py search \
+python $HOME/.agents/skills/kaggle/scripts/cache.py search \
   --competition SLUG \
   --kind discussion \
   "scoring bug"
 
-python .agents/skills/datascience/kaggle/scripts/cache.py status \
+python $HOME/.agents/skills/kaggle/scripts/cache.py status \
   --competition SLUG
 ```
 

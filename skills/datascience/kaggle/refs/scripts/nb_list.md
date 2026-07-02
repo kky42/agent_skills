@@ -4,7 +4,7 @@ List Kaggle notebooks with stable JSON output. Use this instead of ad hoc CLI
 CSV parsing when tracking public sources over time.
 
 ```bash
-python3 .agents/skills/datascience/kaggle/scripts/nb_list.py \
+python3 $HOME/.agents/skills/kaggle/scripts/nb_list.py \
   --competition SLUG \
   --search QUERY \
   --sort scoreDescending \

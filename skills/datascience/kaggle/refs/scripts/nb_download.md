@@ -4,7 +4,7 @@ Download a Kaggle notebook version's source, Kaggle dataset inputs, and output
 zip with a stable manifest.
 
 ```bash
-python3 .agents/skills/datascience/kaggle/scripts/nb_download.py \
+python3 $HOME/.agents/skills/kaggle/scripts/nb_download.py \
   --notebook OWNER/KERNEL \
   --version 26 \
   --all \

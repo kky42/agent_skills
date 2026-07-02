@@ -15,6 +15,17 @@ kaggle competitions submit -c SLUG -k OWNER/KERNEL -v VERSION -m "MESSAGE"
 kaggle competitions submit -c SLUG -k OWNER/KERNEL -v VERSION -f OUTPUT_FILE -m "MESSAGE"
 ```
 
+Before spending a slot, use the NVIDIA-derived quota helper when proactive
+quota visibility is useful:
+
+```bash
+python "$HOME/.agents/skills/kaggle/scripts/nvidia/submission_quota.py" SLUG \
+  --by-user --by-day --as-json
+```
+
+`--by-user` uses the Kaggle SDK submission records rather than only the CLI CSV,
+so counts still depend on what the authenticated account can see.
+
 After submitting, poll `submissions` until the row reaches a terminal state or
 the error is clear. Record submission file path, message, timestamp, status,
 public score, and any error text in the active repo.
@@ -50,6 +61,11 @@ with api.build_kaggle_client() as client:
             print(err.response.text)
         raise
 ```
+
+For long-running code-competition kernel push/submit/poll workflows, use
+`refs/scripts/nvidia.md`, pass `--competition` when metadata contains multiple
+competition sources, and never rerun blindly; each successful submit can spend a
+daily slot.
 
 For public leaderboard forensics, inspect a team's public submissions when the
 team id is visible from `leaderboard --show`:

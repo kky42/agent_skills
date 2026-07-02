@@ -4,7 +4,7 @@ List competition discussion topics with metadata that the Kaggle CLI may omit.
 Use `refs/cli/discussions.md` first for ordinary discussion browsing.
 
 ```bash
-python3 .agents/skills/datascience/kaggle/scripts/disc_list.py \
+python3 $HOME/.agents/skills/kaggle/scripts/disc_list.py \
   --competition SLUG \
   --sort votes \
   --limit 20 \

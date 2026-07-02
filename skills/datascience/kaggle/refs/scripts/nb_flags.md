@@ -4,7 +4,7 @@ Detect notebook official/pinned signals that ordinary `kaggle kernels list`
 does not reliably expose.
 
 ```bash
-python .agents/skills/datascience/kaggle/scripts/nb_flags.py \
+python $HOME/.agents/skills/kaggle/scripts/nb_flags.py \
   --competition SLUG \
   --notebook OWNER/KERNEL \
   --format json \

@@ -16,5 +16,13 @@ Use `--public` only when the objective calls for a public dataset. Use
 Prefer `--format json` when an automation needs the current version number or
 machine-readable status.
 
+Use the NVIDIA-derived upload helper only when automated metadata preservation,
+collaborators, or sanitized create/version flow is useful:
+
+```bash
+python "$HOME/.agents/skills/kaggle/scripts/nvidia/upload_dataset.py" DATASET_DIR \
+  --title "My Dataset" --license CC0-1.0 --version-notes "notes"
+```
+
 Record dataset slug, command, message, file manifest, hashes, status, and
 creation/version time in the active repo.

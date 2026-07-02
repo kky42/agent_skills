@@ -68,6 +68,11 @@ Use `scripts/nb_list.py` for stable search/sort output and optional metadata
 snapshots. Use `scripts/nb_download.py` for versioned source/input/output
 downloads.
 
+Use `refs/scripts/nvidia.md` when you need NVIDIA-derived helpers for Rich
+kernel browsing, SDK score enrichment, public-LB best-version archiving, or a
+full local reproduction workspace. Treat public-LB best-version archiving as a
+research/reproduction tool, not final private-LB selection authority.
+
 If `kaggle kernels pull OWNER/KERNEL` returns `403 Permission 'kernels.get' was
 denied`, inspect the notebook page for `scriptVersionId` and try:
 

@@ -7,6 +7,8 @@ matches the current question.
 - `validation_and_leakage.md`: validation design, leakage control, and
   leaderboard alignment.
 - `public_research.md`: public notebooks, discussions, claims, and artifacts.
+- `research_brief.md`: competition strategy briefs with citations, score
+  ladders, plots, and actionable plans.
 - `reproducibility.md`: candidate identity, records, handoffs, and final
   submission hygiene.
 
