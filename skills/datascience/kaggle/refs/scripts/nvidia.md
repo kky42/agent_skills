@@ -13,21 +13,28 @@ NVK="$KAGGLE_SKILL_DIR/scripts/nvidia"
 
 ## Dependencies And Credentials
 
-Install only when needed:
+Install only when needed. The examples below use `python`; run them inside an
+environment with these packages, or prefix the command with this `uv run` form:
 
 ```bash
 uv run --with httpx --with kaggle --with kagglesdk --with nbformat \
-  --with pydantic --with python-dotenv --with rich \
+  --with 'pydantic>=2' --with python-dotenv --with rich \
   python "$NVK/<script>.py" ...
 ```
 
-Most internal-API helpers require `KAGGLE_API_TOKEN` (KGAT bearer token), not
-just `~/.kaggle/kaggle.json`. Helpers that call the official Kaggle API or CLI
-also need normal Kaggle CLI credentials (`~/.kaggle/kaggle.json` or
-`KAGGLE_USERNAME`/`KAGGLE_KEY`). See `refs/cli/auth.md`.
+Credential requirements vary by helper. Internal-API helpers require
+`KAGGLE_API_TOKEN` (KGAT bearer token), not just `~/.kaggle/kaggle.json`.
+Helpers that call the official Kaggle API or CLI need normal Kaggle CLI
+credentials (`~/.kaggle/kaggle.json` or `KAGGLE_USERNAME`/`KAGGLE_KEY`). The
+dataset upload helper needs normal CLI credentials, and needs `KAGGLE_API_TOKEN`
+only when it must infer the owner because `dataset-metadata.json` has no valid
+`id`. See `refs/cli/auth.md`.
 
 ```bash
+# For internal-API helpers only:
 : "${KAGGLE_API_TOKEN:?set KGAT token before running this helper}"
+
+# For official CLI/API helpers:
 kaggle config view >/dev/null
 ```
 
@@ -159,12 +166,13 @@ python "$NVK/upload_dataset.py" <data-folder> \
 python "$NVK/upload_dataset.py" <data-folder> --license CC0-1.0 --public
 ```
 
-Datasets are private unless `--public` is explicitly requested. Require an
-explicit license for newly generated metadata; preserve existing metadata fields
-when the local `dataset-metadata.json` already has them. If collaborators are
-added, verify metadata after the SDK update because Kaggle may treat
-collaborators as a dataset-settings update. Record dataset slug, command, file
-manifest/hashes, status, and URL in the active repo.
+New datasets are private unless `--public` is explicitly requested; existing
+metadata keeps its current `isPrivate` value unless `--public` or `--private` is
+passed. Require an explicit license for newly generated metadata; preserve
+existing metadata fields when the local `dataset-metadata.json` already has
+them. If collaborators are added, verify metadata after the SDK update because
+Kaggle may treat collaborators as a dataset-settings update. Record dataset
+slug, command, file manifest/hashes, status, and URL in the active repo.
 
 ## Competition Page Helpers
 

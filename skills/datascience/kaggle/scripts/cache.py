@@ -362,8 +362,17 @@ def refresh_discussions(args: argparse.Namespace) -> None:
             detail_path = base / "topics" / f"{topic_id}.json"
             write_json(detail_path, detail)
             content_parts = [detail.get("title") or ""]
+
+            def append_comment_text(comment: dict[str, Any]) -> None:
+                body = comment.get("content") or comment.get("body") or ""
+                content_parts.append(f"{comment.get('author') or ''}: {body}")
+                for reply in comment.get("replies") or []:
+                    if isinstance(reply, dict):
+                        append_comment_text(reply)
+
             for comment in detail.get("comments", []):
-                content_parts.append(f"{comment.get('author') or ''}: {comment.get('body') or ''}")
+                if isinstance(comment, dict):
+                    append_comment_text(comment)
             if detail.get("visible_text"):
                 content_parts.append(str(detail["visible_text"]))
             upsert_doc(
@@ -608,6 +617,9 @@ def like_search(conn: sqlite3.Connection, query: str, args: argparse.Namespace) 
 
 def search_cache(args: argparse.Namespace) -> None:
     root = cache_dir(args)
+    if not db_path(root).exists():
+        print(f"cache index not found at {db_path(root)}; run cache.py init or refresh first", file=sys.stderr)
+        return
     conn = connect(root)
     conn.row_factory = sqlite3.Row
     rows: list[sqlite3.Row]
@@ -654,6 +666,9 @@ def search_cache(args: argparse.Namespace) -> None:
 
 def status(args: argparse.Namespace) -> None:
     root = cache_dir(args)
+    if not db_path(root).exists():
+        print(f"cache index not found at {db_path(root)}; run cache.py init or refresh first", file=sys.stderr)
+        return
     conn = connect(root)
     conn.row_factory = sqlite3.Row
     where = "where competition = ?" if args.competition else ""

@@ -35,8 +35,7 @@ DEFAULT_SUBMISSION_MESSAGE = f"Submitted via skill ({datetime.now(timezone.utc):
 
 
 def has_kaggle_credentials() -> bool:
-    if os.environ.get("KAGGLE_API_TOKEN"):
-        return True
+    """Check for official Kaggle API credentials used by KaggleApi.authenticate()."""
     if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
         return True
     config_dir = os.environ.get("KAGGLE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".kaggle")
@@ -250,8 +249,8 @@ def main():
     args = parser.parse_args()
 
     if not has_kaggle_credentials():
-        print("Error: No Kaggle credentials found.\n"
-              "Create ~/.kaggle/kaggle.json, set KAGGLE_USERNAME/KAGGLE_KEY, or set KAGGLE_API_TOKEN.",
+        print("Error: No Kaggle API credentials found.\n"
+              "Create ~/.kaggle/kaggle.json or set KAGGLE_USERNAME/KAGGLE_KEY.",
               file=sys.stderr)
         sys.exit(1)
 

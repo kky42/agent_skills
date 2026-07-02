@@ -20,6 +20,9 @@ load_project_env()
 def read_discussion(discussion_id: int, competition_id: str = None):
     console = Console()
     db_path = default_db_path()
+    if not db_path.exists():
+        console.print("[yellow]Database not found. Run discussion_ingest.py first.[/yellow]")
+        return
 
     with DiscussionDatabase(db_path) as db:
         if competition_id:

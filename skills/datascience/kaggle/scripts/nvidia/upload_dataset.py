@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from constants import MAX_DATASET_SLUG_LENGTH, MIN_DATASET_SLUG_LENGTH
 
 
-def has_kaggle_credentials() -> bool:
+def has_kaggle_token() -> bool:
     """Check if KGAT credentials are available for username introspection."""
     return bool(os.environ.get("KAGGLE_API_TOKEN"))
 
@@ -76,6 +76,67 @@ def slugify(name: str) -> str:
     return slug[:MAX_DATASET_SLUG_LENGTH] if slug else "my-dataset"
 
 
+def read_existing_metadata(data_path: str) -> dict:
+    """Read dataset-metadata.json if it exists; return an empty dict otherwise."""
+    meta_path = os.path.join(data_path, "dataset-metadata.json")
+    if not os.path.exists(meta_path):
+        return {}
+    try:
+        with open(meta_path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def split_dataset_id(dataset_id: str) -> tuple[str, str] | None:
+    parts = [part.strip() for part in dataset_id.split("/", 1)]
+    if len(parts) == 2 and parts[0] and parts[1]:
+        return parts[0], parts[1]
+    return None
+
+
+def resolve_dataset_identity(data_path: str, args: argparse.Namespace) -> tuple[dict, str, str, str, bool]:
+    """Resolve metadata identity without retargeting existing datasets by default."""
+    existing = read_existing_metadata(data_path)
+    folder_name = os.path.basename(data_path)
+    title = args.title or existing.get("title") or folder_name.replace("-", " ").replace("_", " ").title()
+
+    parsed_id = split_dataset_id(str(existing.get("id") or ""))
+    if parsed_id:
+        username, slug = parsed_id
+    else:
+        if not has_kaggle_token():
+            print(
+                "Error: dataset-metadata.json has no valid id and KAGGLE_API_TOKEN is not set.\n"
+                "Set KAGGLE_API_TOKEN so the helper can resolve your Kaggle username, "
+                "or add an id like 'owner/dataset-slug' to dataset-metadata.json.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        username = get_kaggle_username()
+        slug = slugify(title)
+        if len(slug) < MIN_DATASET_SLUG_LENGTH:
+            print(
+                f"Error: Dataset title '{title}' produces a slug '{slug}' that is too short ({len(slug)} chars). "
+                f"The slug must be between {MIN_DATASET_SLUG_LENGTH} and {MAX_DATASET_SLUG_LENGTH} characters.\n"
+                "Use --title to provide a longer title.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    if args.public:
+        is_private = False
+    elif args.private:
+        is_private = True
+    elif isinstance(existing.get("isPrivate"), bool):
+        is_private = bool(existing["isPrivate"])
+    else:
+        is_private = True
+
+    return existing, username, slug, title, is_private
+
+
 def write_metadata(
     data_path: str,
     username: str,
@@ -83,30 +144,22 @@ def write_metadata(
     title: str,
     is_private: bool,
     license_name: str | None,
+    existing_metadata: dict | None = None,
 ) -> str:
-    """Write dataset-metadata.json and return its path."""
-    metadata = {
-        "id": f"{username}/{slug}",
-        "title": title,
-        "subtitle": "",
-        "description": "",
-        "isPrivate": is_private,
-        "keywords": [],
-    }
+    """Write dataset-metadata.json and return its path.
 
-    meta_path = os.path.join(data_path, "dataset-metadata.json")
-    # Preserve existing fields (description, keywords, etc.) if metadata already exists.
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path) as f:
-                existing = json.load(f)
-            for key in ("subtitle", "description", "keywords", "licenses"):
-                if key in existing and existing[key]:
-                    metadata[key] = existing[key]
-        except (json.JSONDecodeError, OSError):
-            pass
+    Existing metadata is copied first so fields such as description, keywords,
+    subtitle, license, and other Kaggle-supported settings are preserved.
+    """
+    metadata = dict(existing_metadata or {})
+    metadata["id"] = f"{username}/{slug}"
+    metadata["title"] = title
+    metadata["isPrivate"] = is_private
+    metadata.setdefault("subtitle", "")
+    metadata.setdefault("description", "")
+    metadata.setdefault("keywords", [])
 
-    if "licenses" not in metadata:
+    if not metadata.get("licenses"):
         if not license_name:
             print(
                 "Error: dataset-metadata.json has no license. Pass --license (for example CC0-1.0) "
@@ -116,6 +169,7 @@ def write_metadata(
             sys.exit(1)
         metadata["licenses"] = [{"name": license_name}]
 
+    meta_path = os.path.join(data_path, "dataset-metadata.json")
     with open(meta_path, "w") as f:
         json.dump(metadata, f, indent=2)
 
@@ -238,8 +292,10 @@ def add_collaborators(
 def main():
     parser = argparse.ArgumentParser(description="Create or update a Kaggle dataset.")
     parser.add_argument("path", help="Path to folder containing data files")
-    parser.add_argument("--title", help="Dataset title (default: derived from folder name). Slug is derived from title.")
-    parser.add_argument("--public", action="store_true", help="Make dataset public (default: private)")
+    parser.add_argument("--title", help="Dataset title (default: existing metadata title, then folder name)")
+    visibility = parser.add_mutually_exclusive_group()
+    visibility.add_argument("--public", action="store_true", help="Make dataset public")
+    visibility.add_argument("--private", action="store_true", help="Make dataset private")
     parser.add_argument("--license", dest="license_name", help="Kaggle dataset license name for newly generated metadata, e.g. CC0-1.0")
     parser.add_argument("--version-notes", help="Create a new version with these notes")
     parser.add_argument(
@@ -257,19 +313,14 @@ def main():
     )
     args = parser.parse_args()
 
-    # Validate credentials
-    if not has_kaggle_credentials():
-        print("Error: No KGAT token found.\n"
-              "Set KAGGLE_API_TOKEN so the helper can resolve the Kaggle username.",
-              file=sys.stderr)
-        sys.exit(1)
+    # Validate credentials for the Kaggle CLI/API upload commands.
     if not has_kaggle_cli_credentials():
         print("Error: No Kaggle CLI/API credentials found.\n"
               "Create ~/.kaggle/kaggle.json or set KAGGLE_USERNAME and KAGGLE_KEY for upload commands.",
               file=sys.stderr)
         sys.exit(1)
 
-    # Validate data path
+    # Validate data path.
     data_path = os.path.abspath(args.path)
     if not os.path.isdir(data_path):
         print(f"Error: '{data_path}' is not a directory.", file=sys.stderr)
@@ -280,22 +331,7 @@ def main():
         print(f"Error: '{data_path}' contains no data files.", file=sys.stderr)
         sys.exit(1)
 
-    # Resolve username
-    username = get_kaggle_username()
-
-    # Determine title and derive slug from it
-    folder_name = os.path.basename(data_path)
-    title = args.title or folder_name.replace("-", " ").replace("_", " ").title()
-    slug = slugify(title)
-    if len(slug) < MIN_DATASET_SLUG_LENGTH:
-        print(
-            f"Error: Dataset title '{title}' produces a slug '{slug}' that is too short ({len(slug)} chars). "
-            f"The slug must be between {MIN_DATASET_SLUG_LENGTH} and {MAX_DATASET_SLUG_LENGTH} characters.\n"
-            "Use --title to provide a longer title.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    is_private = not args.public
+    existing_metadata, username, slug, title, is_private = resolve_dataset_identity(data_path, args)
 
     collaborators = [parse_collaborator(c) for c in args.collaborator]
 
@@ -307,8 +343,8 @@ def main():
         print(f"Collaborators: {', '.join(c['username'] + ':' + c['role'] for c in collaborators)}")
     print()
 
-    # Write metadata
-    write_metadata(data_path, username, slug, title, is_private, args.license_name)
+    # Write metadata without dropping existing Kaggle metadata fields.
+    write_metadata(data_path, username, slug, title, is_private, args.license_name, existing_metadata)
 
     if args.version_notes:
         # Update existing dataset
@@ -317,7 +353,7 @@ def main():
     else:
         # Create new dataset
         print("Creating dataset...")
-        result = create_dataset(data_path, args.dir_mode, public=args.public)
+        result = create_dataset(data_path, args.dir_mode, public=not is_private)
 
     # Handle output. Kaggle CLI output is untrusted, so strip terminal
     # escape/control sequences and bound its length before printing.

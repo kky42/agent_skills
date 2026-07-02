@@ -19,6 +19,15 @@ from constants import (
 
 load_project_env()
 
+
+def model_to_json_dict(model):
+    if hasattr(model, "model_dump"):
+        return model.model_dump(mode="json")
+    if hasattr(model, "dict"):
+        return model.dict()
+    return dict(model)
+
+
 def query(
     competition_id: str,
     search: str = None,
@@ -31,6 +40,9 @@ def query(
 ):
     console = Console()
     db_path = default_db_path()
+    if not db_path.exists():
+        console.print("[yellow]Database not found. Run discussion_ingest.py first.[/yellow]")
+        return
 
     with DiscussionDatabase(db_path) as db:
         discussions = db.query_discussions(
@@ -48,7 +60,7 @@ def query(
         return
 
     if as_json:
-        out = [d.model_dump(mode="json") for d in discussions]
+        out = [model_to_json_dict(d) for d in discussions]
         print(json.dumps(out, indent=2, default=str))
         return
 

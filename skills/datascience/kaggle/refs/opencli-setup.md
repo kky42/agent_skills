@@ -6,7 +6,8 @@ cookie extraction needed.
 
 ## Prerequisites
 
-OpenCLI must be installed and connected:
+OpenCLI must be installed and connected. Browser commands require a session
+name; Kaggle examples use `kaggle` as that reusable session name.
 
 ```bash
 opencli doctor
@@ -37,17 +38,17 @@ If `opencli doctor` fails:
 ## How it works
 
 OpenCLI drives your existing Chrome window through the Browser Bridge
-extension. It reuses your logged-in sessions — no need to re-authenticate
-for each operation. All browser commands return structured JSON envelopes
-with match confidence levels.
+extension. It reuses your logged-in sessions, so there is no need to manually
+extract cookies or CSRF tokens for each operation. Browser action commands return
+structured JSON envelopes with target and match details.
 
 ## Cost guide
 
 | Command | Rough cost | When to use |
 |---------|-----------|-------------|
-| `browser state` | medium | First call on any page, after every nav |
-| `browser find --css <sel>` | small | Targeted element search |
-| `browser click <ref>` | tiny | Click a button or link by numeric ref |
-| `browser type <ref> <text>` | tiny | Fill a text field |
-| `browser get text/value` | tiny | Verify field content |
-| `browser wait` | varies | Wait for page transitions |
+| `browser <session> state` | medium | First call on any page, after every nav |
+| `browser <session> find --css <sel>` | small | Targeted element search |
+| `browser <session> click <ref>` | tiny | Click a button or link by numeric ref |
+| `browser <session> type <ref> <text>` | tiny | Fill a text field |
+| `browser <session> get text/value` | tiny | Verify field content |
+| `browser <session> wait` | varies | Wait for page transitions |
