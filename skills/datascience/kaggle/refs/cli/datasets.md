@@ -22,7 +22,7 @@ existing `dataset-metadata.json` identity/privacy by default and requires
 `--license` only when generating metadata without an existing license:
 
 ```bash
-python "$HOME/.agents/skills/kaggle/scripts/nvidia/upload_dataset.py" DATASET_DIR \
+python ./scripts/nvidia/upload_dataset.py DATASET_DIR \
   --title "My Dataset" --license CC0-1.0 --version-notes "notes"
 ```
 

@@ -12,13 +12,15 @@ Use this skill when the claim depends on a real agent using the package from a f
 Create a temporary repo or fixture with a real task, keep the prompt outside the target repo, then run:
 
 ```bash
-node /path/to/pi-agent-e2e/scripts/run-fresh-pi.mjs \
+node ./scripts/run-fresh-pi.mjs \
   --cwd /path/to/fixture \
   --session-dir /tmp/pi-e2e/sessions \
   --model deepseek/deepseek-v4-flash \
   --skill /path/to/skill-dir \
   --prompt /tmp/pi-e2e-prompt.md
 ```
+
+Resolve `./scripts/run-fresh-pi.mjs` relative to this skill directory; do not hardcode an agent runtime install root.
 
 The helper disables ambient skills, ambient extensions, prompt templates, themes, and context files. Explicit skill and extension paths still load through `--skill` and `--extension`, so pass the resource under test explicitly.
 
@@ -33,7 +35,7 @@ The helper writes `e2e-prompt.md` inside the session dir and prepends launch con
 1. Define the behavioral contract before running the agent: expected setup, editable surface, eval, forbidden files, expected output fields, and success threshold.
 2. Build a fixture that cannot be solved by editing the score directly. Put implementation under the editable path and eval/rubric outside it.
 3. Commit or otherwise record the baseline. Keep the E2E prompt and scratch logs outside the repo or commit them deliberately.
-4. Run a fresh `pi -p` session through [scripts/run-fresh-pi.mjs](scripts/run-fresh-pi.mjs) or an equivalent explicit command.
+4. Run a fresh `pi -p` session through [./scripts/run-fresh-pi.mjs](./scripts/run-fresh-pi.mjs) or an equivalent explicit command.
 5. Watch intermediate behavior through session files and target artifacts, not final prose only:
    ```bash
    find /tmp/pi-e2e/sessions -type f | sort
@@ -41,7 +43,7 @@ The helper writes `e2e-prompt.md` inside the session dir and prepends launch con
    cat /path/to/fixture/.autoresearch/runs/<id>/status.json
    ```
 6. Verify the contract: the right skill/extension loaded, the agent used expected commands, forbidden files were untouched, generated artifacts exist, eval was actually run, and reported metrics match machine-readable records.
-7. If behavior is weak, patch docs/scripts/prompts, rerun the same fresh-agent test, and keep the failed trace as a regression note.
+7. If behavior is weak, patch docs, scripts, or prompts, rerun the same fresh-agent test, and keep the failed trace as a regression note.
 
 ## Fresh Pi Command Shape
 

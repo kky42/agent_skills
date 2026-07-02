@@ -58,17 +58,17 @@ Top-voted notebooks:
 kaggle kernels list --competition SLUG --page-size N --sort-by voteCount --csv
 ```
 
-Use `scripts/nb_flags.py` only when official or pinned page signals are needed,
+Use `./scripts/nb_flags.py` only when official or pinned page signals are needed,
 because those are not reliably exposed in CLI notebook listing.
 
-Use `scripts/nb_versions.py` when version history or per-version public score
+Use `./scripts/nb_versions.py` when version history or per-version public score
 tracking is needed; the CLI does not expose complete version/LB history.
 
-Use `scripts/nb_list.py` for stable search/sort output and optional metadata
-snapshots. Use `scripts/nb_download.py` for versioned source/input/output
+Use `./scripts/nb_list.py` for stable search/sort output and optional metadata
+snapshots. Use `./scripts/nb_download.py` for versioned source/input/output
 downloads.
 
-Use `refs/scripts/nvidia.md` when you need NVIDIA-derived helpers for Rich
+Use `./refs/scripts/nvidia.md` when you need NVIDIA-derived helpers for Rich
 kernel browsing, SDK score enrichment, public-LB best-version archiving, or a
 full local reproduction workspace. Treat public-LB best-version archiving as a
 research/reproduction tool, not final private-LB selection authority.

@@ -23,16 +23,13 @@ Use this skill to build a pi extension or pi package. It especially covers Codex
 ## Standard repo shape
 
 ```text
-my-extension/
-  index.ts
-  package.json
-  src/
-    my-extension.ts
-  scripts/
-    test-package-loading.ts
+./index.ts
+./package.json
+./src/my-extension.ts
+./scripts/test-package-loading.ts
 ```
 
-Root `index.ts` should only re-export the extension factory:
+Root `./index.ts` should only re-export the extension factory:
 
 ```ts
 export { default } from "./src/my-extension.ts";

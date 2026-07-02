@@ -19,7 +19,7 @@ Before spending a slot, use the NVIDIA-derived quota helper when proactive
 quota visibility is useful:
 
 ```bash
-python "$HOME/.agents/skills/kaggle/scripts/nvidia/submission_quota.py" SLUG \
+python ./scripts/nvidia/submission_quota.py SLUG \
   --by-user --by-day --as-json
 ```
 
@@ -63,7 +63,7 @@ with api.build_kaggle_client() as client:
 ```
 
 For long-running code-competition kernel push/submit/poll workflows, use
-`refs/scripts/nvidia.md`, pass `--competition` when metadata contains multiple
+`./refs/scripts/nvidia.md`, pass `--competition` when metadata contains multiple
 competition sources, and never rerun blindly; each successful submit can spend a
 daily slot.
 
@@ -82,7 +82,7 @@ submissions and separate per-task records for task probes. Include source,
 command, timestamp, artifact path, and feedback for every entry.
 
 When a competition may have changed its evaluation script, refresh the local
-cache with `scripts/cache.py refresh submissions`. Treat the current
+cache with `./scripts/cache.py refresh submissions`. Treat the current
 `publicScore` returned by Kaggle as mutable for historical submissions; the
 cache records score/status changes as observations instead of assuming old
 submission rows are immutable.

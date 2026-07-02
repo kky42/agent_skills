@@ -46,36 +46,36 @@ Open only the reference needed for the current operation.
 
 CLI-only operations:
 
-- Verify Kaggle access: `refs/cli/auth.md`
-- List/download competition data: `refs/cli/data.md`
-- Submit and check feedback: `refs/cli/submit.md`
-- List/pull/publish notebook source/output: `refs/cli/notebooks.md`
-- Create/version datasets: `refs/cli/datasets.md`
+- Verify Kaggle access: `./refs/cli/auth.md`
+- List/download competition data: `./refs/cli/data.md`
+- Submit and check feedback: `./refs/cli/submit.md`
+- List/pull/publish notebook source/output: `./refs/cli/notebooks.md`
+- Create/version datasets: `./refs/cli/datasets.md`
 - Browse discussion topics/comments with official CLI support:
-  `refs/cli/discussions.md`
+  `./refs/cli/discussions.md`
 
 Script-backed operations, only where the Kaggle CLI is insufficient:
 
-- Local routine cache/search: `refs/scripts/cache.md`
-- Competition page sections: `refs/scripts/comp_page.md`
-- Notebook search snapshots: `refs/scripts/nb_list.md`
-- Notebook version artifact download: `refs/scripts/nb_download.md`
+- Local routine cache/search: `./refs/scripts/cache.md`
+- Competition page sections: `./refs/scripts/comp_page.md`
+- Notebook search snapshots: `./refs/scripts/nb_list.md`
+- Notebook version artifact download: `./refs/scripts/nb_download.md`
 - Discussion topic list/filter with preserved raw metadata:
-  `refs/scripts/disc_list.md`
+  `./refs/scripts/disc_list.md`
 - Fetch a full discussion thread (opening post + nested comment tree with
-  author names, votes, dates): `refs/scripts/disc_get.md`
-- Notebook official/pinned flags: `refs/scripts/nb_flags.md`
-- Notebook version/score updates: `refs/scripts/nb_versions.md`
+  author names, votes, dates): `./refs/scripts/disc_get.md`
+- Notebook official/pinned flags: `./refs/scripts/nb_flags.md`
+- Notebook version/score updates: `./refs/scripts/nb_versions.md`
 - NVIDIA-derived helpers for writeups, public kernel score/version archives,
   Rich discussion/kernel SQLite browsing, submission quota checks,
   code-competition kernel submission polling, dataset uploads, and local kernel
-  reproduction: `refs/scripts/nvidia.md`
+  reproduction: `./refs/scripts/nvidia.md`
 
-Browser-backed operations (requires OpenCLI, see `refs/opencli-setup.md`):
+Browser-backed operations (requires OpenCLI, see `./refs/opencli-setup.md`):
 
 - Fallback for any interactive task not supported by the CLI or scripts
   (post discussion topics, reply to comments, notebook comments, etc.):
-  `refs/kaggle-interaction.md`
+  `./refs/kaggle-interaction.md`
 
 Long-running public source tracking must preserve author identities where
 available: user id, user name, display name, profile URL, tier, and raw source
@@ -96,14 +96,14 @@ in the main context.
 
 Methodology:
 
-- General Kaggle principles: `refs/general/README.md`
+- General Kaggle principles: `./refs/general/README.md`
 - Competition strategy briefs with citations, score ladders, and honest plots:
-  `refs/general/research_brief.md`
+  `./refs/general/research_brief.md`
 
 External resources for future maintenance:
 
 - NVIDIA nvidia-kaggle upstream and merged snapshot notes:
-  `refs/nvidia-kaggle.md`
+  `./refs/nvidia-kaggle.md`
 
 ## Update Boundary
 
@@ -127,6 +127,8 @@ Examples that belong in the repo:
 
 ## Maintenance Rules
 
+- Keep internal skill paths relative to the skill root, e.g. `./refs/...` and
+  `./scripts/...`; never hardcode agent runtime install roots.
 - Keep `SKILL.md` as the first-layer index and boundary contract.
 - Use CLI docs for simple Kaggle CLI operations; do not add scripts for them.
 - Add scripts only for scraping, comment extraction, official/pinned detection,

@@ -10,17 +10,17 @@ uploads, and code-competition submission polling.
 Merged snapshot:
 
 - Source commit: `5d9f7de9293fe1baf36dca41036f2f39742e9433`
-- Vendored helper location: `scripts/nvidia/`
+- Vendored helper location: `./scripts/nvidia/`
 - License: MIT, with copyright notice as stated in upstream `LICENSE`:
-  `Copyright (c) 2026 nvidia-kaggle maintainers`; see `scripts/nvidia/LICENSE`
+  `Copyright (c) 2026 nvidia-kaggle maintainers`; see `./scripts/nvidia/LICENSE`
 
 ## Future Update Flow
 
 1. Clone or fetch the upstream repository.
 2. Compare `skills/nvidia-kaggle-skill/` with this local skill.
-3. Prefer merging reusable workflow guidance into `refs/` and keep
+3. Prefer merging reusable workflow guidance into `./refs/` and keep
    competition-specific behavior out of the skill.
-4. Keep NVIDIA-derived executable helpers under `scripts/nvidia/` unless they
+4. Keep NVIDIA-derived executable helpers under `./scripts/nvidia/` unless they
    are rewritten to match the native `.kaggle-skill/cache/` JSON workflow.
 5. Preserve MIT attribution when copying substantial code or docs.
 6. Re-check dependency and credential assumptions; upstream helpers commonly use

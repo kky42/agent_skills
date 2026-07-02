@@ -19,7 +19,7 @@ keep the same tab state.
 opencli doctor
 ```
 
-See `refs/opencli-setup.md` if setup is needed.
+See `./refs/opencli-setup.md` if setup is needed.
 
 ---
 
