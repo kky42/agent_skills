@@ -71,8 +71,12 @@ Script-backed operations, only where the Kaggle CLI is insufficient:
   code-competition kernel submission polling, dataset uploads, and local kernel
   reproduction: `./refs/scripts/nvidia.md`
 
-Browser-backed operations (requires OpenCLI, see `./refs/opencli-setup.md`):
+Browser-backed operations (use an authenticated browser profile; OpenCLI setup
+is in `./refs/opencli-setup.md`, and `playwright-cli` is also appropriate when
+available):
 
+- Download authorized submission artifacts that the CLI/SDK can list but not
+  download, e.g. teammate submission zips: `./refs/browser/submission-artifacts.md`
 - Fallback for any interactive task not supported by the CLI or scripts
   (post discussion topics, reply to comments, notebook comments, etc.):
   `./refs/kaggle-interaction.md`
@@ -97,6 +101,7 @@ in the main context.
 Methodology:
 
 - General Kaggle principles: `./refs/general/README.md`
+- Reproducibility and artifact provenance: `./refs/general/reproducibility.md`
 - Competition strategy briefs with citations, score ladders, and honest plots:
   `./refs/general/research_brief.md`
 

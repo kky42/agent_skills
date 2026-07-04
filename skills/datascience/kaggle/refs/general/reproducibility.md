@@ -27,6 +27,9 @@ Track enough to answer:
 - Was public LB used to tune, calibrate, or select it? If yes, what score and
   submission id?
 - Which final submission included it and why was it accepted or rejected?
+- If the artifact was downloaded from Kaggle rather than rebuilt locally, who
+  submitted it, when, from which authorized UI/API source, with what status,
+  score(s), description, displayed size, local path, and SHA256?
 
 For long-running agentic search, keep compact machine-readable indexes in
 addition to human notes:
@@ -61,6 +64,25 @@ and defer bulky sessions or raw artifacts until they have a specific question.
 - Keep full session transcripts and bulky artifacts available but off the first
   context path. Agents should scan summaries and compact tables first, then open
   raw artifacts only for a specific question.
+
+## Artifact Baselines
+
+Distinguish **source-reproducible** baselines from **artifact-only** baselines.
+A source-reproducible baseline can be rebuilt from pinned code/config/data. An
+artifact-only baseline is a submitted file downloaded from Kaggle or another
+authorized source; it is useful feedstock but may be overwritten or fall behind
+when the repo is rebuilt from source.
+
+When rebasing to an artifact-only submission:
+
+- backup the prior local baseline artifact and manifest;
+- verify archive integrity, expected layout, file count, size limits, and hash;
+- write a manifest containing source, command/browser action, timestamp,
+  submitter, submission id/ref, score(s), status, description, SHA256, and an
+  inventory appropriate to the competition;
+- explicitly record that the artifact has not yet been imported into source;
+- avoid committing raw downloaded artifacts unless the active repo's policy says
+  they are tracked.
 
 ## Final Submission Hygiene
 

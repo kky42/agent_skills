@@ -3,11 +3,14 @@
 Perform Kaggle operations that require write access or browser interaction
 using your logged-in Chrome session via an OpenCLI browser session. No manual
 cookie or CSRF-token extraction is needed; commands run as the logged-in browser
-user.
+user. If your runtime provides `playwright-cli` instead of OpenCLI, the same
+principles apply: attach to the authenticated Chrome profile, discover refs from
+fresh snapshots, interact, then verify.
 
-Use this for any Kaggle task that the CLI and Python scripts cannot do:
-posting discussions, replying to comments, notebook commenting, or other
-interactive operations.
+Use this for Kaggle tasks that the CLI and Python scripts cannot do: posting
+discussions, replying to comments, notebook commenting, or other interactive
+operations. For authorized submission artifact downloads, prefer the dedicated
+`./refs/browser/submission-artifacts.md` checklist.
 
 ## Setup
 

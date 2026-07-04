@@ -8,6 +8,11 @@ kaggle competitions submissions -c SLUG --page-size 20 --csv
 kaggle competitions leaderboard SLUG --show --csv
 ```
 
+Before a real submit, stage the file to the exact basename expected by the
+competition when that name is known (often `submission.csv` or `submission.zip`).
+Some Kaggle flows can upload bytes from a differently named file and then fail
+at CreateSubmission with a generic 400. Record the staged path and SHA256.
+
 For code competitions, submit a kernel output when appropriate:
 
 ```bash
@@ -27,8 +32,13 @@ python ./scripts/nvidia/submission_quota.py SLUG \
 so counts still depend on what the authenticated account can see.
 
 After submitting, poll `submissions` until the row reaches a terminal state or
-the error is clear. Record submission file path, message, timestamp, status,
-public score, and any error text in the active repo.
+the error is clear. Parse statuses defensively: rows may look like
+`SubmissionStatus.COMPLETE` or `SubmissionStatus.ERROR`, error rows can appear
+above successful rows, and score fields may be blank while judging or after an
+error. If the submissions command fails, surface stderr/stdout and return a
+nonzero status; do not treat it as "no submissions". Record submission file
+path, message, timestamp, status, public score, and any error text in the active
+repo.
 
 If `kaggle competitions submit` prints only a generic `400 Client Error`, call
 the same endpoint through the installed Kaggle SDK and print the response body.
@@ -75,7 +85,10 @@ kaggle competitions team-submissions TEAM_ID --csv
 ```
 
 For regular competitions this reports the public leaderboard submission; for
-simulation competitions it reports active public submissions.
+simulation competitions it reports active public submissions. The CLI and SDK can
+list submission metadata but may not expose teammate artifact downloads. If an
+authorized browser UI shows a downloadable submission file that the CLI cannot
+fetch, use `../browser/submission-artifacts.md`.
 
 Record every submission in a ledger. Keep a single ledger for full-bundle
 submissions and separate per-task records for task probes. Include source,

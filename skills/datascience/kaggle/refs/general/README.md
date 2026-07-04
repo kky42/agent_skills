@@ -9,8 +9,8 @@ matches the current question.
 - `public_research.md`: public notebooks, discussions, claims, and artifacts.
 - `research_brief.md`: competition strategy briefs with citations, score
   ladders, plots, and actionable plans.
-- `reproducibility.md`: candidate identity, records, handoffs, and final
-  submission hygiene.
+- `reproducibility.md`: candidate identity, records, artifact baselines,
+  handoffs, and final submission hygiene.
 
 ## Append Rules
 
