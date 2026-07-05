@@ -1,6 +1,0 @@
-{
-  "name": "opencli-plugin-chatgptx",
-  "version": "0.1.0",
-  "type": "module",
-  "description": "ChatGPT OpenCLI helper commands used by the chatgpt skill"
-}

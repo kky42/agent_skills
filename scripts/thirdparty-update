@@ -1,0 +1,473 @@
+#!/usr/bin/env python3
+"""Guarded updater for vendored third-party skills.
+
+This script treats the upstream repository as source of truth, but never blindly
+overwrites local vendored edits. It discovers the upstream skill by SKILL.md
+frontmatter name, compares base/ours/theirs, and either reports what changed or
+applies a guarded update.
+"""
+
+from __future__ import annotations
+
+import argparse
+import filecmp
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LOCK_PATH = REPO_ROOT / "thirdparty-lock.json"
+MANIFEST_PATH = REPO_ROOT / "thirdparty-skills.yml"
+
+
+class UpdateError(Exception):
+    pass
+
+
+def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True, capture: bool = True) -> str:
+    proc = subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        text=True,
+        capture_output=capture,
+    )
+    if check and proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise UpdateError(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{detail}")
+    return (proc.stdout or "").strip()
+
+
+def clean_scalar(value: str):
+    value = value.strip()
+    if " #" in value:
+        value = value.split(" #", 1)[0].rstrip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+def load_manifest(path: Path) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    skills: list[dict] = []
+    current = None
+    current_list_key = None
+    for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("skills:"):
+            current = None
+            current_list_key = None
+            continue
+        if stripped.startswith("- "):
+            item = stripped[2:].strip()
+            if ":" in item:
+                key, value = item.split(":", 1)
+                if key.strip() == "skill":
+                    current = {"skill": clean_scalar(value)}
+                    skills.append(current)
+                    current_list_key = None
+                    continue
+            if current is None or current_list_key is None:
+                raise UpdateError(f"{path}:{line_no}: list item without a list key")
+            current.setdefault(current_list_key, []).append(clean_scalar(item))
+            continue
+        if current is None:
+            raise UpdateError(f"{path}:{line_no}: expected a skill entry")
+        if ":" not in stripped:
+            raise UpdateError(f"{path}:{line_no}: expected key: value")
+        key, value = stripped.split(":", 1)
+        key = key.strip()
+        if value.strip():
+            current[key] = clean_scalar(value)
+            current_list_key = None
+        else:
+            current[key] = []
+            current_list_key = key
+    return {item["skill"]: item for item in skills if item.get("skill")}
+
+
+def folder_hash(root: Path) -> str:
+    h = hashlib.sha1()
+    if not root.exists():
+        return ""
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and not any(part == ".git" for part in path.parts):
+            rel = path.relative_to(root).as_posix()
+            h.update(rel.encode("utf-8"))
+            h.update(b"\0")
+            h.update(path.read_bytes())
+            h.update(b"\0")
+    return h.hexdigest()
+
+
+def frontmatter_name(text: str) -> str | None:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return None
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        if key.strip() == "name":
+            value = clean_scalar(value)
+            return str(value) if value else None
+    return None
+
+
+def derive_source_url(source: str) -> str:
+    if source.startswith("http://") or source.startswith("https://") or source.startswith("git@"):
+        return source
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source):
+        return f"https://github.com/{source}.git"
+    raise UpdateError(f"cannot derive git URL from source {source!r}; add sourceUrl to thirdparty-lock.json")
+
+
+def git_object_exists(repo: Path, commit: str, path: str) -> bool:
+    proc = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}:{path}"],
+        cwd=str(repo),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return proc.returncode == 0
+
+
+def git_show(repo: Path, commit: str, path: str) -> str:
+    return run(["git", "show", f"{commit}:{path}"], cwd=repo)
+
+
+def tree_files(repo: Path, commit: str) -> list[str]:
+    out = run(["git", "ls-tree", "-r", "--name-only", commit], cwd=repo)
+    return [line for line in out.splitlines() if line]
+
+
+def discover_skill_path(repo: Path, commit: str, skill: str, preferred: str | None) -> tuple[str, list[str]]:
+    if preferred and git_object_exists(repo, commit, preferred):
+        try:
+            declared = frontmatter_name(git_show(repo, commit, preferred))
+        except UpdateError:
+            declared = None
+        if declared in (None, skill):
+            return preferred, []
+
+    candidates = []
+    for file in tree_files(repo, commit):
+        if file == "SKILL.md" or file.endswith("/SKILL.md"):
+            try:
+                declared = frontmatter_name(git_show(repo, commit, file))
+            except UpdateError:
+                continue
+            if declared == skill:
+                candidates.append(file)
+
+    if len(candidates) == 1:
+        return candidates[0], []
+    if not candidates:
+        # Last-resort hint list for the agent/human report.
+        hint = [file for file in tree_files(repo, commit) if file == "SKILL.md" or file.endswith("/SKILL.md")]
+        raise UpdateError(
+            f"could not find upstream skill {skill!r} at {commit}; "
+            f"preferred path {preferred!r} missing and no SKILL.md frontmatter name matched.\n"
+            f"SKILL.md candidates: {hint[:30]}"
+        )
+    raise UpdateError(f"ambiguous upstream skill {skill!r} at {commit}; candidates: {candidates}")
+
+
+def export_skill_dir(repo: Path, commit: str, skill_path: str, dest: Path) -> None:
+    skill_dir = str(Path(skill_path).parent)
+    if skill_dir == ".":
+        raise UpdateError("root-level SKILL.md is not supported by this updater yet")
+    tmp = Path(tempfile.mkdtemp(prefix="thirdparty-archive."))
+    try:
+        archive = subprocess.Popen(["git", "archive", commit, skill_dir], cwd=str(repo), stdout=subprocess.PIPE)
+        tar = subprocess.run(["tar", "-x", "-C", str(tmp)], stdin=archive.stdout, text=False)
+        if archive.stdout:
+            archive.stdout.close()
+        rc = archive.wait()
+        if rc != 0 or tar.returncode != 0:
+            raise UpdateError(f"failed to archive {commit}:{skill_dir}")
+        extracted = tmp / skill_dir
+        if not extracted.exists():
+            raise UpdateError(f"archive did not contain {skill_dir}")
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(extracted), str(dest))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def replace_dir(src: Path, dest: Path) -> None:
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dest)
+
+
+def copy_dir_contents(src: Path, dest: Path) -> None:
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if item.name == ".git":
+            continue
+        target = dest / item.name
+        if item.is_dir():
+            shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
+
+
+def init_merge_repo(base_dir: Path, ours_dir: Path, theirs_dir: Path) -> tuple[Path, bool]:
+    repo = Path(tempfile.mkdtemp(prefix="thirdparty-merge."))
+    run(["git", "init", "-q"], cwd=repo)
+    run(["git", "config", "user.email", "agent-skills@example.invalid"], cwd=repo)
+    run(["git", "config", "user.name", "agent-skills updater"], cwd=repo)
+
+    copy_dir_contents(base_dir, repo)
+    run(["git", "add", "."], cwd=repo)
+    run(["git", "commit", "-q", "-m", "base"], cwd=repo)
+
+    run(["git", "checkout", "-q", "-b", "ours"], cwd=repo)
+    copy_dir_contents(ours_dir, repo)
+    run(["git", "add", "-A"], cwd=repo)
+    run(["git", "commit", "-q", "-m", "ours"], cwd=repo)
+
+    run(["git", "checkout", "-q", "-b", "theirs", "master"], cwd=repo)
+    copy_dir_contents(theirs_dir, repo)
+    run(["git", "add", "-A"], cwd=repo)
+    run(["git", "commit", "-q", "-m", "theirs"], cwd=repo)
+
+    run(["git", "checkout", "-q", "ours"], cwd=repo)
+    proc = subprocess.run(["git", "merge", "--no-edit", "theirs"], cwd=str(repo), text=True, capture_output=True)
+    return repo, proc.returncode == 0
+
+
+def summarize_dir_diff(a: Path, b: Path) -> list[str]:
+    if not a.exists() or not b.exists():
+        return ["one side is missing"]
+    lines = []
+    cmp = filecmp.dircmp(a, b)
+
+    def walk(dc: filecmp.dircmp, prefix: str = ""):
+        for name in dc.left_only:
+            lines.append(f"- removed upstream? only-left {prefix}{name}")
+        for name in dc.right_only:
+            lines.append(f"- added upstream? only-right {prefix}{name}")
+        for name in dc.diff_files:
+            lines.append(f"- modified {prefix}{name}")
+        for sub in dc.subdirs.values():
+            walk(sub, prefix + sub.left.name + "/")
+
+    walk(cmp)
+    return lines[:80]
+
+
+def update_lock_entry(lock: dict, skill: str, entry: dict, *, source_url: str, source_ref: str, source_commit: str, skill_path: str, upstream_hash: str, vendored_hash: str) -> None:
+    updated = dict(entry)
+    updated["sourceUrl"] = source_url
+    updated["sourceRef"] = source_ref
+    updated["sourceCommit"] = source_commit
+    updated["sourceWorktreeDirty"] = False
+    updated["skillPath"] = skill_path
+    updated["skillFolderHash"] = upstream_hash
+    updated["vendoredFolderHash"] = vendored_hash
+    updated["localPatch"] = upstream_hash != vendored_hash
+    updated["updatedAt"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    updated.setdefault("vendoredPath", f"skills/thirdparty/{skill}")
+    lock.setdefault("skills", {})[skill] = updated
+
+
+def build_context(skill: str, ref_override: str | None):
+    if not LOCK_PATH.exists():
+        raise UpdateError("thirdparty-lock.json not found")
+    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    manifest = load_manifest(MANIFEST_PATH)
+    entry = dict(lock.get("skills", {}).get(skill) or {})
+    if not entry and skill in manifest:
+        entry = dict(manifest[skill])
+    if not entry:
+        raise UpdateError(f"unknown third-party skill: {skill}")
+
+    source = entry.get("source") or manifest.get(skill, {}).get("source")
+    source_url = entry.get("sourceUrl") or derive_source_url(source)
+    vendored_rel = entry.get("vendoredPath") or f"skills/thirdparty/{skill}"
+    vendored = (REPO_ROOT / vendored_rel).resolve()
+    if not vendored.exists():
+        raise UpdateError(f"vendored skill path does not exist: {vendored}")
+
+    work = Path(tempfile.mkdtemp(prefix=f"thirdparty-update-{skill}."))
+    repo = work / "repo"
+    run(["git", "clone", "--quiet", "--no-checkout", source_url, str(repo)])
+
+    source_ref = ref_override or entry.get("sourceRef") or "origin/HEAD"
+    if source_ref.startswith("refs/heads/"):
+        source_ref = "origin/" + source_ref.split("/", 2)[-1]
+    if ref_override and not re.fullmatch(r"[0-9a-f]{7,40}", source_ref) and not source_ref.startswith("origin/"):
+        source_ref = "origin/" + source_ref
+    target_commit = run(["git", "rev-parse", source_ref], cwd=repo)
+
+    base_commit = entry.get("sourceCommit") or ""
+    if base_commit:
+        proc = subprocess.run(["git", "cat-file", "-e", f"{base_commit}^{{commit}}"], cwd=str(repo))
+        if proc.returncode != 0:
+            run(["git", "fetch", "--quiet", "origin", base_commit], cwd=repo)
+
+    preferred_path = entry.get("skillPath") or f"skills/{skill}/SKILL.md"
+    theirs_path, _ = discover_skill_path(repo, target_commit, skill, preferred_path)
+    theirs_dir = work / "theirs"
+    export_skill_dir(repo, target_commit, theirs_path, theirs_dir)
+    theirs_hash = folder_hash(theirs_dir)
+
+    base_dir = None
+    base_path = ""
+    base_hash = ""
+    if base_commit:
+        base_path, _ = discover_skill_path(repo, base_commit, skill, preferred_path)
+        base_dir = work / "base"
+        export_skill_dir(repo, base_commit, base_path, base_dir)
+        base_hash = folder_hash(base_dir)
+
+    current_hash = folder_hash(vendored)
+    locked_hash = entry.get("skillFolderHash") or ""
+    if base_dir:
+        local_patch = current_hash != base_hash
+        upstream_changed = target_commit != base_commit or theirs_path != base_path or theirs_hash != base_hash
+    else:
+        local_patch = bool(locked_hash and current_hash != locked_hash)
+        upstream_changed = not locked_hash or theirs_hash != locked_hash or theirs_path != preferred_path
+
+    return {
+        "lock": lock,
+        "entry": entry,
+        "manifest": manifest,
+        "work": work,
+        "repo": repo,
+        "skill": skill,
+        "sourceUrl": source_url,
+        "sourceRef": source_ref,
+        "targetCommit": target_commit,
+        "baseCommit": base_commit,
+        "basePath": base_path,
+        "theirsPath": theirs_path,
+        "vendored": vendored,
+        "vendoredRel": vendored_rel,
+        "baseDir": base_dir,
+        "theirsDir": theirs_dir,
+        "baseHash": base_hash,
+        "theirsHash": theirs_hash,
+        "currentHash": current_hash,
+        "lockedHash": locked_hash,
+        "localPatch": local_patch,
+        "upstreamChanged": upstream_changed,
+    }
+
+
+def print_report(ctx: dict) -> None:
+    print(f"skill: {ctx['skill']}")
+    print(f"source: {ctx['sourceUrl']}")
+    print(f"targetRef: {ctx['sourceRef']}")
+    print(f"baseCommit: {ctx['baseCommit'] or '(none)'}")
+    print(f"targetCommit: {ctx['targetCommit']}")
+    print(f"vendoredPath: {ctx['vendoredRel']}")
+    print(f"baseSkillPath: {ctx['basePath'] or '(none)'}")
+    print(f"targetSkillPath: {ctx['theirsPath']}")
+    print(f"currentHash: {ctx['currentHash']}")
+    print(f"baseHash: {ctx['baseHash'] or '(none)'}")
+    print(f"upstreamHash: {ctx['theirsHash']}")
+    print(f"localPatch: {'yes' if ctx['localPatch'] else 'no'}")
+    print(f"upstreamChanged: {'yes' if ctx['upstreamChanged'] else 'no'}")
+    if ctx["baseDir"] and ctx["upstreamChanged"]:
+        print("upstreamDiffSummary:")
+        for line in summarize_dir_diff(ctx["baseDir"], ctx["theirsDir"]):
+            print(f"  {line}")
+    if ctx["baseDir"] and ctx["localPatch"]:
+        print("localPatchSummary:")
+        for line in summarize_dir_diff(ctx["baseDir"], ctx["vendored"]):
+            print(f"  {line}")
+
+
+def apply_update(ctx: dict) -> None:
+    if not ctx["upstreamChanged"]:
+        print("no upstream changes to apply")
+        return
+
+    vendored = ctx["vendored"]
+    final_hash = ""
+    if not ctx["localPatch"]:
+        replace_dir(ctx["theirsDir"], vendored)
+        final_hash = folder_hash(vendored)
+        print(f"replaced {ctx['vendoredRel']} with upstream {ctx['targetCommit']}")
+    else:
+        if not ctx["baseDir"]:
+            raise UpdateError(
+                "local vendored edits exist but lock has no sourceCommit/base tree; "
+                "cannot do a safe three-way merge. Ask an agent/human to reconcile."
+            )
+        merge_repo, clean = init_merge_repo(ctx["baseDir"], vendored, ctx["theirsDir"])
+        if not clean:
+            print(f"merge conflict. Resolve manually in: {merge_repo}")
+            print("After resolving, copy that tree into the vendored path and update thirdparty-lock.json.")
+            raise SystemExit(2)
+        copy_dir_contents(merge_repo, vendored)
+        final_hash = folder_hash(vendored)
+        shutil.rmtree(merge_repo, ignore_errors=True)
+        print(f"merged upstream {ctx['targetCommit']} into local patched {ctx['vendoredRel']}")
+
+    update_lock_entry(
+        ctx["lock"],
+        ctx["skill"],
+        ctx["entry"],
+        source_url=ctx["sourceUrl"],
+        source_ref=ctx["sourceRef"],
+        source_commit=ctx["targetCommit"],
+        skill_path=ctx["theirsPath"],
+        upstream_hash=ctx["theirsHash"],
+        vendored_hash=final_hash,
+    )
+    LOCK_PATH.write_text(json.dumps(ctx["lock"], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print("updated thirdparty-lock.json")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check/apply guarded updates for vendored third-party skills")
+    parser.add_argument("skill")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check", action="store_true", help="report upstream/local changes without mutating")
+    mode.add_argument("--apply", action="store_true", help="apply a safe update or stop on ambiguity/conflict")
+    parser.add_argument("--ref", help="upstream ref to use instead of lock sourceRef/default branch")
+    parser.add_argument("--keep-workdir", action="store_true", help="do not delete temporary checkout after check/apply")
+    args = parser.parse_args()
+
+    ctx = None
+    try:
+        ctx = build_context(args.skill, args.ref)
+        print_report(ctx)
+        if args.apply:
+            apply_update(ctx)
+            print("next: ./scripts/skill-deps check && ./scripts/skill-sync --check")
+        return 0
+    except UpdateError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    finally:
+        if ctx and not args.keep_workdir:
+            shutil.rmtree(ctx["work"], ignore_errors=True)
+        elif ctx:
+            print(f"kept workdir: {ctx['work']}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

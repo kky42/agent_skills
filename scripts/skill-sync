@@ -243,6 +243,10 @@ def link_skills(desired: dict):
                         continue
                     if under(linked_target, skills_root):
                         target.unlink()
+                    elif under(source, skills_root / "thirdparty"):
+                        old_target = os.readlink(target)
+                        target.unlink()
+                        print(f"replaced external skill symlink with repo link: {target} (was {old_target})", flush=True)
                     else:
                         raise SystemExit(
                             f"error: {target} already exists as an unmanaged symlink "

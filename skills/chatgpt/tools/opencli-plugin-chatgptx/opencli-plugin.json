@@ -1,6 +1,0 @@
-{
-  "name": "chatgptx",
-  "version": "0.1.0",
-  "description": "ChatGPT OpenCLI helper commands used by the chatgpt skill",
-  "opencli": ">=1.8.5"
-}

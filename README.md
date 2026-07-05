@@ -25,7 +25,7 @@ One place to manage global skills, their local patches, and skill-owned tools ac
 
 1. validates `SKILL.md` names and `skill.meta.json` dependencies;
 2. links every repo skill into runtime folders such as `~/.agents/skills` and `~/.claude/skills`;
-3. installs declared skill-owned tools, such as OpenCLI plugins.
+3. installs declared skill-owned tools when a skill explicitly lists them in `skill.meta.json`.
 
 It does **not** run `npx skills` or blindly overwrite third-party skills from upstream.
 
@@ -42,11 +42,12 @@ Edits to linked skills are visible immediately because runtime folders point bac
 Useful commands:
 
 ```bash
-./scripts/skill-sync --skills-only   # links skills, skips tools
-./scripts/skill-sync --tools-only    # installs declared tools only
-./scripts/skill-sync --check         # validates without mutating
-./scripts/skill-deps list            # dependency graph summary
-./scripts/skill-deps why chatgpt     # reverse deps and tool deps
+./scripts/skill-sync --skills-only       # links skills, skips tools
+./scripts/skill-sync --tools-only        # installs declared tools only
+./scripts/skill-sync --check             # validates without mutating
+./scripts/skill-deps list                # dependency graph summary
+./scripts/skill-deps why chatgpt         # reverse deps and tool deps
+./scripts/thirdparty-update pievo --check # base/ours/theirs update report
 ```
 
 Skill target folders are configured with `AGENT_SKILLS_SKILL_TARGETS`. The legacy `AGENT_HUB_SKILL_TARGETS` name is still accepted. Default:
@@ -62,11 +63,20 @@ Third-party skills are vendored and reviewed like code. Do not use `npx skills a
 Update flow:
 
 1. Use `thirdparty-skills.yml` and `thirdparty-lock.json` to identify upstream source/path/hash.
-2. Fetch or inspect upstream in a temp checkout.
-3. Have an agent review the upstream diff against `skills/thirdparty/<skill>/`.
-4. Manually apply the desired upstream changes while preserving local patches.
-5. Update `thirdparty-lock.json` provenance/hash if the upstream content is accepted.
-6. Run:
+2. Run a guarded check:
+
+   ```bash
+   ./scripts/thirdparty-update <skill> --check
+   ```
+
+3. If the report is clear, apply:
+
+   ```bash
+   ./scripts/thirdparty-update <skill> --apply
+   ```
+
+4. If the script reports ambiguity, missing base, moved/renamed/split skill, or merge conflicts, stop and have an agent review the temp workdir/diff.
+5. Run:
 
    ```bash
    ./scripts/skill-deps check
@@ -78,44 +88,36 @@ Use `npx skills add <source> --list` only for discovery, not for updating this r
 
 ## Skill-owned Tools
 
-A skill can own tool code under its directory. Example:
+A skill can own helper code under its directory. Tool code does not need to be globally installed unless the skill declares it in `skill.meta.json`.
+
+Example of a local helper script used directly by a skill:
 
 ```text
 skills/chatgpt/
   SKILL.md
   skill.meta.json
-  tools/opencli-plugin-chatgptx/
-    opencli-plugin.json
-    package.json
-    commands.js
+  tools/playwright/deep-research-extract-current.js
 ```
 
-The skill declares the tool in `skill.meta.json`:
+Example of an installable tool declaration, for skills that need one:
 
 ```json
 {
-  "name": "chatgpt",
-  "dependsOnSkills": ["opencli-usage", "browseruse", "playwright-cli"],
+  "name": "example-skill",
   "dependsOnTools": [
     {
       "kind": "opencli-plugin",
-      "name": "chatgptx",
-      "path": "tools/opencli-plugin-chatgptx",
-      "verify": "opencli chatgptx status -f json"
+      "name": "example-plugin",
+      "path": "tools/opencli-plugin-example",
+      "verify": "opencli example-plugin status -f json"
     }
   ]
 }
 ```
 
-`skill-sync` installs local OpenCLI plugins with `opencli plugin install file://...`. Local plugins are symlinked by OpenCLI, so source edits are reflected immediately; rerun `skill-sync` after changing plugin metadata or moving paths.
+`skill-sync` installs declared local OpenCLI plugins with `opencli plugin install file://...`. Local plugins are symlinked by OpenCLI, so source edits are reflected immediately; rerun `skill-sync` after changing plugin metadata or moving paths.
 
-After upgrading a dependency package such as OpenCLI, run:
-
-```bash
-npm install -g @jackwener/opencli
-./scripts/skill-sync --tools-only
-opencli chatgptx status -f json
-```
+`skills/chatgpt` is intentionally Playwright-only now. It does not declare or install an OpenCLI plugin.
 
 ## Dependency Safety
 

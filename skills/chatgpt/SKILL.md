@@ -1,99 +1,73 @@
 ---
 name: chatgpt
-description: Use when the user says ask ChatGPT, GPT Pro, GPT-5.5, ChatGPT web, or wants ChatGPT Projects, sources, connectors, model/reasoning selection, retry/resend, or seed/harvest workers. Prefer OpenCLI first; fall back to playwright-cli only for unsupported UI flows.
-allowed-tools: Bash(opencli:*) Bash(playwright-cli:*) Bash(python:*) Bash(node:*) Bash(npm:*)
+description: Use when the user says ask ChatGPT, GPT Pro, GPT-5.5, ChatGPT web, ChatGPT Projects, model/reasoning selection, Deep Research, Web Search, connectors, project sources, retry/resend, or browser-based ChatGPT harvesting. Uses playwright-cli as the only browser automation transport.
+allowed-tools: Bash(playwright-cli:*) Bash(python:*) Bash(python3:*) Bash(node:*) Bash(npm:*) Bash(osascript:*) Bash(pkill:*) Bash(mkdir:*) Bash(rm:*) Bash(date:*) Bash(ps:*) Bash(sleep:*) Bash(cat:*) Bash(tee:*)
 ---
 
-# ChatGPT Web
+# ChatGPT Web via playwright-cli
 
-Use ChatGPT as a browser product, not an API. Prefer **OpenCLI adapter/plugin commands** for normal ask/detail/project-source/retry flows because they return JSON receipts and isolate browser sessions better than a singleton Playwright tab. Fall back to `playwright-cli` only when OpenCLI lacks the needed UI action or when debugging extension-specific behavior.
+Use ChatGPT as a browser product, not an API. Drive it through `playwright-cli`, preferably attached to the already logged-in Chrome Canary profile with the Playwright Extension.
 
-Validation evidence lives in [`VALIDATION.md`](VALIDATION.md). Load it when you need exact proof, caveats, or selectors from the last full verification run.
+`playwright-cli` gives low-level browser primitives; this skill adds the missing ChatGPT-specific protocol: account locks, tab leases, receipts, pacing, cleanup, and verification.
 
-## OpenCLI First Loop
+Validation evidence lives in [`VALIDATION.md`](VALIDATION.md). Some older validation may mention other adapters; follow this Playwright-first protocol for new ChatGPT work.
 
-1. **Check browser bridge/profile when state is unknown**.
+## Operating Model
 
-   ```bash
-   opencli doctor
-   opencli profile list
-   opencli profile use <profile-id>
-   ```
+- Treat the ChatGPT account and attached Chrome profile as shared mutable state.
+- Use one browser writer at a time for sends, model/tool changes, source edits, retries, and harvest reads.
+- Release the lock while ChatGPT thinks. Save a receipt with the conversation URL, then harvest later.
+- Prefer attached Chrome Canary for logged-in ChatGPT work. Do not create fresh persistent profiles unless the user explicitly wants isolation and is willing to log in there.
+- Do not use `close-all`, `kill-all`, `delete-data`, cookie clearing, localStorage clearing, or profile deletion on an attached user browser unless the user explicitly asks.
+- Verify visible state after every important UI action. A click is not proof.
 
-2. **Send and save a receipt**.
+## What playwright-cli Does Not Provide
 
-   Normal chat:
+Compensate for these gaps yourself:
 
-   ```bash
-   opencli chatgpt ask "$prompt" --new --wait false --site-session ephemeral -f json
-   ```
+| Missing in base `playwright-cli` | Required ChatGPT discipline |
+| --- | --- |
+| No account/browser mutex | Use the lock protocol below before every browser mutation or harvest. |
+| No job receipts | Write receipt JSON for every sent prompt. |
+| No pacing/rate limit state | Enforce submit/access intervals and record cooldowns. |
+| No broker queue | For multi-agent or batch work, queue receipt files and run one browser operation at a time. |
+| No site-specific selectors | Verify ChatGPT composer, tool pill, model label, conversation URL, and generation state. |
+| No shared-profile safety | Only close tabs you opened; detach instead of closing Chrome Canary. |
+| `run-code` cannot read shell env | Generate temporary JS with JSON-embedded prompt/config using Python or Node. |
 
-   Project chat:
+## Default Session
 
-   ```bash
-   opencli chatgpt ask "$prompt" --project <project-id-or-url> --wait false --site-session ephemeral -f json
-   ```
-
-   Continue a conversation:
-
-   ```bash
-   opencli chatgpt ask "$followup" --conversation <conversation-url> --wait false --site-session ephemeral -f json
-   ```
-
-   Save `conversationUrl` as the receipt. Do not hold a browser lock while ChatGPT thinks.
-
-3. **Harvest later**.
-
-   ```bash
-   opencli chatgpt detail "$conversationUrl" --wait --stable 3 --timeout 600 --site-session ephemeral -f json
-   ```
-
-4. **Use chatgptx plugin for patched flows and receipts**.
-
-   ```bash
-   opencli chatgptx status -f json
-   opencli chatgptx consult "$prompt" --github true --model-tier normal --wait false -f json
-   opencli chatgptx harvest <receipt-or-job-id> --wait true --timeout 600 --stable 3 -f json
-   opencli chatgptx broker-enqueue "$prompt" --github true --model-tier pro -f json
-   opencli chatgptx broker-run --limit 1 -f json
-   opencli chatgptx broker-status -f json
-   opencli chatgptx project-source-list --project <project-id> -f json
-   opencli chatgptx project-source-delete --project <project-id> --name <file-name> -f json
-   opencli chatgptx retry <conversation-url> --mode again -f json
-   ```
-
-5. **Verify**.
-
-   Read URL/title/body text, `detail` JSON, project source list, or saved receipt files. Do not claim an operation worked from a click alone.
-
-## Playwright Fallback Loop
-
-Use this only for unsupported UI flows, debugging, or when OpenCLI is broken.
+Use a stable attached session name. On this machine prefer:
 
 ```bash
-playwright-cli attach --extension=chrome-canary --session chatgpt
-playwright-cli list
-playwright-cli -s=chatgpt tab-list
+export CHATGPT_PW_SESSION=${CHATGPT_PW_SESSION:-chatgpt-canary}
+playwright-cli attach --extension=chrome-canary --session "$CHATGPT_PW_SESSION"
+playwright-cli list --json
+playwright-cli -s="$CHATGPT_PW_SESSION" tab-list
 ```
 
-Completion criterion: `playwright-cli list` shows one intended `chatgpt` session.
+If the session already exists, reuse it. If work is complete, detach the Playwright controller without closing the real browser:
 
-If attach hangs or the extension page says `Invalid token provided`, recover the Chrome Canary Playwright Extension token before retrying (see **Chrome Canary Extension Token** below).
+```bash
+playwright-cli -s="$CHATGPT_PW_SESSION" detach
+```
+
+Use `playwright-cli -s="$CHATGPT_PW_SESSION" close` only for sessions created with `open`, not for attached Chrome Canary sessions.
 
 ## Chrome Canary Extension Token
 
-The Playwright Extension uses a local pairing token. It is not a ChatGPT token. It can change when Chrome Canary, the extension, or the browser profile changes. The CLI token must match the token shown by the extension.
+The Playwright Extension uses a local pairing token. It is not a ChatGPT token. It can change when Chrome Canary, the extension, or the browser profile changes.
 
 Symptoms of a stale token:
 
-- `playwright-cli attach --extension=chrome-canary --session chatgpt` hangs.
-- A `chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/connect.html...` tab says `Invalid token provided`.
+- `playwright-cli attach --extension=chrome-canary --session ...` hangs.
+- A `chrome-extension://.../connect.html` tab says `Invalid token provided`.
 - The shell has an old `PLAYWRIGHT_MCP_EXTENSION_TOKEN` value.
 
-Recovery flow:
+Recovery:
 
 1. Open/click the Playwright Extension icon in Chrome Canary, or inspect an existing `status.html` tab.
-2. Read the status text. If automation is allowed and a status tab exists, this pattern works:
+2. If automation is allowed, this usually extracts the status text:
 
    ```bash
    osascript <<'OSA'
@@ -113,64 +87,116 @@ Recovery flow:
    OSA
    ```
 
-3. Copy the line `PLAYWRIGHT_MCP_EXTENSION_TOKEN=<token>`.
-4. Update the local shell env source (normally `~/.zshenv.local`, sourced by zsh and bash on this machine), or use the token inline:
+3. Copy `PLAYWRIGHT_MCP_EXTENSION_TOKEN=<token>` into the local shell env source, or use it inline.
+4. Kill stale attach attempts if necessary:
 
    ```bash
-   PLAYWRIGHT_MCP_EXTENSION_TOKEN='<token>' \
-     playwright-cli attach --extension=chrome-canary --session chatgpt
+   pkill -f 'playwright-cli attach --extension=chrome-canary' || true
+   pkill -f 'cliDaemon.js .*--extension' || true
    ```
 
-5. Kill stale attach daemons before retrying if necessary:
+5. Retry attach and verify `tab-list` works.
 
-   ```bash
-   pkill -f 'playwright-cli attach --extension=chrome-canary --session=chatgpt' || true
-   pkill -f 'cliDaemon.js chatgpt .*--extension' || true
-   ```
+## Lock Protocol
 
-Verify after retry: `playwright-cli list` shows `chatgpt` attached to `chrome-canary`, then `playwright-cli -s=chatgpt tab-list` works.
+Use a local lock before any operation that touches ChatGPT UI state: opening/selecting tabs, changing model/tool, filling composer, sending, retrying, reading a still-changing answer, adding/deleting sources, or closing tabs.
 
-## Browser Session Discipline
+```bash
+export CHATGPT_PW_STATE=${CHATGPT_PW_STATE:-$HOME/.local/state/chatgpt-playwright}
+lock="$CHATGPT_PW_STATE/locks/account.lock"
+mkdir -p "$CHATGPT_PW_STATE/locks" "$CHATGPT_PW_STATE/receipts" "$CHATGPT_PW_STATE/outputs"
+if ! mkdir "$lock" 2>/dev/null; then
+  echo "ChatGPT browser is busy: $lock" >&2
+  cat "$lock/owner.json" 2>/dev/null || true
+  exit 75
+fi
+cat > "$lock/owner.json" <<EOF
+{"pid":$$,"cwd":"$PWD","session":"${CHATGPT_PW_SESSION:-chatgpt-canary}","started_at":"$(date -u +%FT%TZ)"}
+EOF
+trap 'rm -rf "$lock"' EXIT
+# browser mutation or harvest here
+```
 
-- Prefer OpenCLI `--site-session ephemeral` for ask/detail fan-out.
-- For ad-hoc browser driving, use a task-scoped OpenCLI browser session and close it when done:
+Rules:
 
-  ```bash
-  opencli browser chatgpt-<task> open https://chatgpt.com/ --window background
-  opencli browser chatgpt-<task> close || true
-  ```
+- The lock protects browser/account interaction, not the entire model generation time.
+- Release the lock immediately after send is accepted and the receipt is saved.
+- Reacquire the lock for each harvest attempt, then release it again.
+- If a lock looks stale, inspect `owner.json` and the process before removing it. Never delete another active agent's lock blindly.
+- Do not ask parallel agents to drive the same `CHATGPT_PW_SESSION`. Parallel agents may prepare prompts or analyze outputs, but a single broker/driver should touch the browser.
 
-- Use `--keep-tab true` only for debugging or an explicit handoff; report session name and URL.
-- In Playwright fallback, reuse session `chatgpt`; do not use `tab-new` for routine work.
-- Check tab/session count before and after long automation.
-- If many user tabs are open, ask before closing them.
+## Tab Lease Discipline
 
-## Conversation Continuity And Follow-ups
+- Use one tab per job while sending or harvesting.
+- Record the conversation URL in the receipt as soon as it appears.
+- Close only tabs you opened for the job, unless `--keep-tab`-style debugging was explicitly requested.
+- If the user already has many ChatGPT tabs, avoid broad tab cleanup; report the session and URL instead.
+- For attached Chrome Canary, prefer `detach` over `close` at the end.
 
-Follow-up questions should usually continue the same ChatGPT conversation, not start a fresh chat.
+Typical send lifecycle:
 
-- Save or report the conversation URL after the first successful send, e.g. `https://chatgpt.com/c/<conversation-id>` or Project conversation URL.
-- For a follow-up, `goto` the saved conversation URL (or keep the current tab if already there), verify the title/body matches the prior task, then send the follow-up in the same composer.
-- Mention relevant previous constraints briefly in the follow-up prompt; do not assume ChatGPT retained hidden context perfectly.
-- Harvest only the latest assistant message for the follow-up, but keep the full conversation URL as the receipt.
-- If the prior answer is still generating, do not send a follow-up; wait until Stop is gone.
-- If connector/source context matters, verify the GitHub chip, Project URL, or Sources tab again before the follow-up.
+1. Acquire lock.
+2. Attach/reuse `CHATGPT_PW_SESSION`.
+3. `tab-new` the target (`https://chatgpt.com/new`, a Project URL, or an existing conversation URL).
+4. Select model/tool/source context.
+5. Fill composer and send.
+6. Wait until a conversation URL exists and the prompt visibly moved into the thread.
+7. Write receipt.
+8. Optionally close the send tab.
+9. Release lock while ChatGPT thinks.
 
-## Concurrency And Multi-agent Use
+Typical harvest lifecycle:
 
-Multiple agents driving the same ChatGPT account can type into the wrong composer, switch global UI state, interrupt generation, or harvest the wrong answer. OpenCLI improves tab isolation, but agents still need external state: a lock plus receipts.
+1. Acquire lock.
+2. Open/goto receipt `conversationUrl`.
+3. Check whether generation is still running.
+4. Extract latest assistant output or Deep Research iframe text.
+5. Write output and update receipt.
+6. Close own harvest tab unless debugging.
+7. Release lock.
 
-Preferred pattern: **OpenCLI send-and-release, then scheduled harvest**.
+## Receipts
 
-- Hold a browser/account lock only while performing mutations: connector selection, model/effort switch, project source add/delete, retry/resend, fill, send, or harvest read.
-- Respect pacing while holding the lock: access/harvest every 30s; prompt submissions every 30s for normal model and 60s for pro unless overridden.
-- After send is accepted and the conversation URL is saved, release the lock. Do not hold the lock for the whole model thinking time.
-- Store a receipt with `conversationUrl`, `promptHash` or task id, model/effort, sent time, expected earliest harvest time, and output path. Prefer `chatgptx consult` or `chatgptx broker-enqueue` so this is automatic.
-- Harvest later by reacquiring the lock, going to the receipt URL, checking whether Stop is gone, saving the latest assistant message, then releasing the lock again. Prefer `chatgptx harvest` or `chatgptx broker-run`.
-- If Stop is still present or the answer is incomplete, update `readAfterIso` and release the lock; do not wait while holding it.
-- Follow-ups must use the same receipt/conversation URL and the same lock protocol.
+Every send must produce a receipt. Minimum schema:
 
-Suggested harvest schedule by effort:
+```json
+{
+  "jobId": "short-stable-id",
+  "status": "sent",
+  "promptHash": "sha256:...",
+  "conversationUrl": "https://chatgpt.com/c/...",
+  "projectUrl": null,
+  "model": "extra-high",
+  "tool": "web-search|deep-research|github|null",
+  "sentAtIso": "2026-07-05T00:00:00Z",
+  "readAfterIso": "2026-07-05T00:10:00Z",
+  "outputPath": "/tmp/chatgpt-job.md",
+  "session": "chatgpt-canary",
+  "history": []
+}
+```
+
+Suggested locations:
+
+```text
+~/.local/state/chatgpt-playwright/receipts/<job-id>.json
+~/.local/state/chatgpt-playwright/outputs/<job-id>.md
+```
+
+For multi-agent work, use receipt files as the broker. Only one browser driver should process due receipts. Other agents can enqueue prompts by writing receipt stubs or prompt files; they should not independently operate the browser.
+
+## Pacing And Rate Limits
+
+Default pacing:
+
+| Operation | Minimum spacing |
+| --- | ---: |
+| Page access / harvest read | 30s |
+| Normal submit | 30s |
+| Pro / Extra High submit | 60s |
+| Deep Research submit | 60s+ |
+
+Suggested first harvest:
 
 | Effort / task kind | First harvest | Retry cadence |
 | --- | ---: | ---: |
@@ -179,77 +205,167 @@ Suggested harvest schedule by effort:
 | High | 5-8m | 2-3m |
 | Extra High | 10-15m | 3-5m |
 | Pro Standard | 15-25m | 5-10m |
-| Pro Extended / deep research | 30-60m | 10-20m |
+| Pro Extended / Deep Research | 30-60m | 10-20m |
 
-For manual one-off operations, serialize each browser operation with a local lock:
+If ChatGPT shows `Too many requests` or `You're making requests too quickly`:
 
-```bash
-lock=/tmp/chatgpt-playwright.lock
-if ! mkdir "$lock" 2>/dev/null; then
-  echo "chatgpt session busy: $lock" >&2
-  exit 75
-fi
-cat > "$lock/owner.json" <<EOF
-{"pid":$$,"cwd":"$PWD","started_at":"$(date -u +%FT%TZ)"}
-EOF
-trap 'rm -rf "$lock"' EXIT
-# opencli chatgpt/chatgptx mutation or playwright fallback only
-```
+1. Click `Got it` if present.
+2. Save the cooldown in the receipt or `~/.local/state/chatgpt-playwright/rate-state.json`.
+3. Do not retry in a tight loop. Wait or report the next retry time.
 
-Rules:
+## Run-code Pattern
 
-- Do not ask parallel subagents to independently drive the same `chatgpt` session unless they all obey the same lock/receipt protocol.
-- The lock protects browser interaction, not the whole ChatGPT generation.
-- Release the lock immediately after the send receipt is saved, and after each harvest attempt.
-- If a lock is stale, inspect owner process/session before removing it; never delete another active agent's lock blindly.
-- If true simultaneous browser interaction is required, use separate browser profiles/sessions and separate conversations, then merge results outside the browser.
-
-## Broker / Receipt Queue
-
-Use the broker when multiple agents or long-running prompts need safe coordination.
+`playwright-cli run-code --filename` executes a single function in Playwright's context. It cannot read shell variables via `process.env`. Generate temporary JS with JSON literals embedded:
 
 ```bash
-opencli chatgptx broker-enqueue "$prompt" --github true --tag <task> -f json
-opencli chatgptx broker-run --limit 1 -f json      # sends one queued job or harvests one due job
-opencli chatgptx broker-status -f json
+prompt_file=/tmp/prompt.md
+js_file=/tmp/chatgpt-send-$$.js
+python3 - "$prompt_file" "$js_file" <<'PY'
+import json, sys
+prompt = open(sys.argv[1]).read()
+out = sys.argv[2]
+open(out, 'w').write("async page => {\n  const prompt = " + json.dumps(prompt, ensure_ascii=False) + ";\n  return await (async () => ({ ok: true, chars: prompt.length }))();\n}\n")
+PY
+playwright-cli --raw -s="$CHATGPT_PW_SESSION" run-code --filename="$js_file"
+rm -f "$js_file"
 ```
 
-Default state is `~/.local/state/chatgptx/` unless `CHATGPTX_STATE_DIR` is set. Each receipt records prompt hash, connector choice, model tier, pacing intervals, conversation URL, `readAfterIso`, output path, attempts, and history. Use `--receipt-dir` and `--output` for project-local artifacts.
+Use `--raw` when piping JSON to files or parsers.
 
-## Rate Limits And Pacing
+## Normal Chat: Send
 
-ChatGPT may show a `Too many requests` modal even when one click on `Got it` clears it. `chatgptx` handles this by dismissing the modal, recording a cooldown in `~/.local/state/chatgptx/rate-state.json`, and waiting before retrying the page action.
-
-Defaults:
-
-- Submit interval, normal model: `30s`.
-- Submit interval, pro model: `60s` (`--model-tier pro`).
-- Access/harvest interval: `30s`.
-
-Useful flags:
+Minimal send flow:
 
 ```bash
-opencli chatgptx consult "$prompt" --model-tier normal          # submit every 30s
-opencli chatgptx consult "$prompt" --model-tier pro             # submit every 60s
-opencli chatgptx consult "$prompt" --submit-interval 45         # override submit pacing
-opencli chatgptx harvest <job> --access-interval 30             # read/visit pacing
-opencli chatgptx status -f json                                 # shows next access/submit slot
+export CHATGPT_PW_SESSION=${CHATGPT_PW_SESSION:-chatgpt-canary}
+prompt_file=/tmp/prompt.md
+js_file=/tmp/chatgpt-send-$$.js
+python3 - "$prompt_file" "$js_file" <<'PY'
+import json, sys
+prompt = open(sys.argv[1]).read()
+out = sys.argv[2]
+open(out, 'w').write(f'''async page => {{
+  const prompt = {json.dumps(prompt, ensure_ascii=False)};
+  await page.goto('https://chatgpt.com/new', {{ waitUntil: 'domcontentloaded' }});
+  await page.locator('#prompt-textarea, [data-testid="prompt-textarea"]').last().waitFor({{ timeout: 30000 }});
+  const editor = page.locator('#prompt-textarea, [data-testid="prompt-textarea"]').last();
+  await editor.fill(prompt);
+  await page.waitForTimeout(500);
+  const send = page.locator('button[data-testid="send-button"], #composer-submit-button').last();
+  await send.waitFor({{ timeout: 15000 }});
+  await send.click();
+  await page.waitForFunction(() => /chatgpt\\.com\\/(?:g\\/g-p-[^/]+\\/)?c\\/[A-Za-z0-9_-]+/.test(location.href), null, {{ timeout: 45000 }});
+  return JSON.stringify({{ ok: true, conversationUrl: page.url(), title: await page.title() }});
+}}
+''')
+PY
+playwright-cli --raw -s="$CHATGPT_PW_SESSION" run-code --filename="$js_file"
+rm -f "$js_file"
 ```
 
-Keep `--rate-wait true` unless you want fail-fast behavior. With `--rate-wait false`, commands stop and report the next allowed slot instead of sleeping.
+After send:
 
-## Normal Chat
+- Parse `conversationUrl`.
+- Verify the URL is not `/new`.
+- Write the receipt.
+- Release the lock.
 
-Use normal chat for small independent questions when Project sources are unnecessary.
-
-Preferred send/read pattern:
+If `fill()` fails or the send button stays disabled, inspect a snapshot and use explicit click/type as fallback:
 
 ```bash
-opencli chatgpt ask "$prompt" --new --wait false --site-session ephemeral -f json
-opencli chatgpt detail "$conversationUrl" --wait --stable 3 --timeout 600 --site-session ephemeral -f json
+playwright-cli -s="$CHATGPT_PW_SESSION" snapshot --depth=4
+playwright-cli -s="$CHATGPT_PW_SESSION" click '#prompt-textarea'
+playwright-cli -s="$CHATGPT_PW_SESSION" type "short diagnostic prompt"
 ```
 
-The composer `Add files and more` menu exposes tools/connectors such as Web search, Deep research, GitHub, OpenAI Platform, and Finances. OpenCLI's built-in `--web-search` and `--deep-research` are available. Use `opencli chatgptx consult "$prompt" --github true` when you need a real GitHub connector pill plus a receipt.
+For long prompts, prefer generated `run-code` with `locator.fill()` over CLI `type`; it is faster and less error-prone.
+
+## Normal Chat: Harvest
+
+Harvest the latest answer from a saved conversation URL:
+
+```bash
+conversationUrl='https://chatgpt.com/c/...'
+playwright-cli -s="$CHATGPT_PW_SESSION" goto "$conversationUrl"
+playwright-cli --raw -s="$CHATGPT_PW_SESSION" run-code "async page => {
+  await page.waitForTimeout(2000);
+  const stop = await page.locator('button[aria-label*=\"Stop\"], button[data-testid*=\"stop\"]').count().catch(() => 0);
+  const turns = await page.locator('section[data-testid^=\"conversation-turn-\"]').all();
+  let text = '';
+  for (const turn of turns) {
+    const body = await turn.innerText().catch(() => '');
+    if (/ChatGPT said:|Sora said:|Assistant/.test(body) || body.length > text.length) text = body;
+  }
+  return JSON.stringify({ generating: stop > 0, url: page.url(), title: await page.title(), text });
+}"
+```
+
+Stability rule:
+
+- If `generating` is true, update `readAfterIso` and release the lock.
+- If text length changes between two reads separated by 3-10 seconds, wait and retry later.
+- Save raw JSON plus Markdown output. Do not summarize away source evidence unless the user asked for a summary.
+
+## Deep Research
+
+Sending Deep Research is just a normal send with tool selection first. Harvesting is different: the final report may live inside a cross-origin sandbox iframe.
+
+Use the bundled extractor after opening the conversation:
+
+```bash
+playwright-cli -s="$CHATGPT_PW_SESSION" goto "$conversationUrl"
+playwright-cli --raw -s="$CHATGPT_PW_SESSION" run-code \
+  --filename=/Users/kky/dev/agent_skills/skills/chatgpt/tools/playwright/deep-research-extract-current.js \
+  > /tmp/deep-research.json
+python3 - <<'PY'
+import json
+raw = open('/tmp/deep-research.json').read().strip()
+data = json.loads(json.loads(raw)) if raw.startswith('"') else json.loads(raw)
+print(data.get('text',''))
+PY
+```
+
+Deep Research is done when the extracted text contains a report body and the visible page no longer shows an active research/progress state. If only the user prompt is visible, update `readAfterIso` and retry later.
+
+## Model And Reasoning Effort
+
+Before sending, explicitly set and verify the desired model/effort when it matters.
+
+Known labels include:
+
+- `Instant`
+- `Medium`
+- `High`
+- `Extra High`
+- `Pro Standard`
+- `Pro Extended`
+
+Procedure:
+
+1. Snapshot the composer area.
+2. Click the current model/effort button near the composer.
+3. Click the desired option by visible text.
+4. Re-read the visible label and fail if it does not match.
+5. Mention the selected model/effort in the receipt.
+
+Do not assume a previous conversation's effort carries over correctly. ChatGPT UI state is global and can drift.
+
+## Tools And Connectors
+
+The composer `Add files and more` menu exposes tools/connectors such as Web Search, Deep Research, GitHub, OpenAI Platform, and Finances.
+
+Procedure:
+
+1. Click `button[data-testid="composer-plus-btn"]` or `#composer-plus-btn`.
+2. Select the desired item by visible text (`Web search`, `Deep research`, `GitHub`, etc.).
+3. Verify the composer shows the selected pill/tool state before sending.
+4. Include `tool` in the receipt.
+
+For GitHub connector:
+
+- A plain text `@github` is not enough. Verify a real inline connector pill appears.
+- Ask a narrow repo/branch/path question first to prove access.
+- If ChatGPT says GitHub connector is unavailable or lacks access, report that. Do not silently fall back to local `gh` unless the user asked for local GitHub access.
 
 ## Project Chat
 
@@ -263,13 +379,18 @@ https://chatgpt.com/g/<project-id>/project?tab=sources
 https://chatgpt.com/g/<project-id>/c/<conversation-id>
 ```
 
-Verified Project facts:
+Project send flow:
 
-- Project tabs: `Chats`, `Sources`.
-- Project composer can send/read like normal chat.
-- Project runtime was validated by asking ChatGPT to run `printf CHATGPT_SKILL_BASH_OK` and receiving that exact output.
+1. Acquire lock.
+2. Open the Project URL, not ordinary `/new`.
+3. Verify the page title/body identifies the intended Project.
+4. Verify required Sources exist if the prompt depends on them.
+5. Select model/tool if needed.
+6. Fill composer and send.
+7. Save Project conversation URL in the receipt.
+8. Release lock while ChatGPT thinks.
 
-For runtime-dependent tasks, prompt ChatGPT to run a concrete command and report exact output. Treat the assistant's response as evidence, then require downstream local validation for any code/results it proposes.
+For runtime-dependent tasks, ask ChatGPT to run a concrete command and report exact output. Treat the answer as evidence, then validate locally before acting on code/results.
 
 ## Project Sources
 
@@ -279,137 +400,110 @@ Use GitHub connector/repo context for fast-changing material: current source fil
 
 ### Text source
 
-Verified flow:
-
 1. Open `/project?tab=sources`.
 2. Click `Add sources`.
 3. Click `Text input`.
 4. Fill `Title (optional)` and `Text`.
 5. Click `Save`.
 6. Verify the `.txt` source appears.
-7. Remove via `Source actions -> Delete` when done.
+7. Delete test sources after validation.
 
 ### File source
 
-Preferred OpenCLI flow:
-
-```bash
-opencli chatgpt project-file-add /absolute/path/to/file.md \
-  --id <project-id> \
-  --site-session persistent \
-  --keep-tab true \
-  -f json
-opencli chatgptx project-source-list --project <project-id> -f json
-```
-
-Important: `project-file-add` can return before source indexing is fully usable. Verify the filename in Sources and, for critical runs, ask a marker question before planting workers.
-
-Delete with:
-
-```bash
-opencli chatgptx project-source-delete --project <project-id> --name <file-name> -f json
-```
-
-Playwright drag/drop remains a fallback if OpenCLI upload breaks.
+1. Open `/project?tab=sources`.
+2. Click `Add sources` -> `Upload`.
+3. Use `playwright-cli -s="$CHATGPT_PW_SESSION" upload /absolute/path/to/file` when the file chooser is active.
+4. Wait for the filename to appear.
+5. For critical runs, ask a marker question that can only be answered from the source before planting workers.
 
 ### Drive and Slack
 
-`Add sources` exposes:
+`Add sources` may expose Google Drive and Slack. Stop at OAuth or broad workspace permission screens unless the user explicitly asks to continue.
 
-- `Upload`
-- `Text input`
-- `Google Drive`
-- `Slack`
+## Conversation Continuity And Follow-ups
 
-Google Drive and Slack were verified up to their auth gates. Do not proceed through OAuth or broad workspace permissions unless the user explicitly asks.
+Follow-up questions should usually continue the same ChatGPT conversation, not start a fresh chat.
 
-## GitHub Connector
+- Open the saved `conversationUrl`.
+- Verify URL/title/body match the prior task.
+- Ensure the prior answer is no longer generating.
+- Send the follow-up in the same composer.
+- Restate key constraints briefly; do not assume hidden context was retained perfectly.
+- Harvest only the latest assistant message, but keep the full conversation URL as the receipt.
 
-Use GitHub for live repo context, but verify access per repo/session.
+## Retry / Resend
 
-Observed behavior:
+Use retry when the browser/UI accepted the prompt but the answer is bad, failed, or incomplete.
 
-- Plain text `@github` sent through `opencli chatgpt ask` may be treated as text, not a connector pill.
-- Browser UI can turn `@github` into a real inline connector pill (`data-inline-selection-pill`, `data-keyword="GitHub"`).
-- A real pill still may fail if ChatGPT's GitHub connector lacks repo/account access.
+- Reopen the receipt conversation URL.
+- Verify the target response is the one you intend to retry.
+- Prefer an explicit follow-up such as “try again with these constraints” when auditability matters.
+- UI-level regenerate buttons can be used, but record the action in receipt history and verify the new response replaced or followed the old one.
 
-Flow:
+## Worker Farms And Batch Work
 
-1. Open normal chat or Project composer.
-2. Type `@github`, select the GitHub suggestion, and verify the GitHub pill appears.
-3. Ask a narrow repo/branch/path question and require a marker or JSON answer.
-4. If the answer says unavailable, report connector access failure; do not silently fall back to local `gh` unless the user asked for that.
-
-`opencli chatgptx consult "$prompt" --github true` encapsulates explicit connector selection and fails if the GitHub pill is not created. If the answer says unavailable, report connector access failure; do not silently fall back to local `gh` unless the user asked for that.
-
-## Model And Reasoning Effort
-
-Verified in the Project composer:
-
-- Model entry: `GPT-5.5`.
-- Effort button: `Extra High`.
-- Menu choices: `Instant`, `Medium`, `High`, `Extra High`, `Pro Extended`.
-- `Pro effort options` submenu: `Pro Standard`, `Pro Extended`.
-
-To change effort:
-
-1. Click the current effort button (`Extra High`, `Pro Extended`, etc.).
-2. Click the desired effort.
-3. Re-read visible button text to verify selection.
-4. Restore the prior setting if the change was only a test.
-
-## Worker Farm
-
-Use a repo-local farm script instead of manual browser loops for high-volume planting/harvesting.
-
-Example from `neurogolf-2026`:
-
-```bash
-python scripts/chatgpt_pwcli_farm.py --session chatgpt status --browser
-python scripts/chatgpt_pwcli_farm.py --session chatgpt batch-plant \
-  --prompt-dir .context/chatgpt_farm/prompts \
-  --project-url "$CHATGPT_PROJECT_URL" \
-  --limit 25 \
-  --wait-minutes 60
-python scripts/chatgpt_pwcli_farm.py --session chatgpt batch-harvest \
-  --all-active \
-  --wait-ready-seconds 90
-```
+For high-volume work, do not let many agents touch the browser. Use a single Playwright driver loop that consumes queued receipts/prompts.
 
 Hard rules:
 
-- For Project-source workers, plant only into the Project URL; ordinary `https://chatgpt.com/` chats cannot see Project Sources.
-- Verify Project sources before planting (`sources-status` or equivalent browser evidence). For validation-heavy workers, include the data they need (for NeuroGolf, canonical plus extended/fresh ARC-GEN JSONs), not just commands to generate it.
-- At least 90 seconds between sends.
+- One active browser writer.
+- At least 60-90 seconds between sends for expensive models.
 - At least 30 seconds between harvest reads.
-- At most 25 active planted sessions.
 - Every plant writes a receipt with conversation URL and `readAfterIso`.
-- For repeated prompt variants on the same task, use an attempt/session key (for example `--attempt-id`) instead of overwriting the active session.
 - Every harvest writes raw JSON/Markdown.
 - If a chat is still generating, keep it active and harvest again later.
+- For repeated prompt variants on the same task, use an attempt/session key instead of overwriting the active receipt.
 
-Prompt quality rules for implementation workers:
+Parallel agents may prepare prompts, review outputs, or synthesize results outside the browser. They must not independently drive `CHATGPT_PW_SESSION`.
 
-- Optimize prompts for free exploration plus runnable artifacts, not visible thinking time.
-- Require complete solver/patch code in the answer; no code means reject/replant.
-- Require source evidence and a public audit log, not private chain-of-thought.
-- Require workers to distinguish commands actually run from proposed validation commands.
+## Screenshots, Video, And Visual Evidence
 
-Validation covered manual plant, batch plant, single harvest, and batch harvest with spacing.
+Use Playwright's native capture tools when the task asks for UI evidence or README assets:
+
+```bash
+playwright-cli -s="$CHATGPT_PW_SESSION" screenshot --filename=/tmp/chatgpt-page.png
+playwright-cli -s="$CHATGPT_PW_SESSION" screenshot '#prompt-textarea' --filename=/tmp/composer.png
+playwright-cli -s="$CHATGPT_PW_SESSION" video-start /tmp/chatgpt-flow.webm
+playwright-cli -s="$CHATGPT_PW_SESSION" video-stop
+```
+
+Before saving or sharing screenshots/videos:
+
+- Redact user account data, private prompts, tokens, emails, repo secrets, and sidebar titles when needed.
+- Prefer cropped element screenshots over full-page screenshots.
+- Keep README images small and reproducible; store generation steps with the asset.
+
+## Cleanup
+
+At the end of each task:
+
+- Save receipt/output paths and conversation URL.
+- Close tabs opened solely for the task, unless debugging or user handoff requires keeping them.
+- Hide highlights and stop videos/traces.
+- Detach attached Chrome Canary sessions instead of closing the browser:
+
+  ```bash
+  playwright-cli -s="$CHATGPT_PW_SESSION" detach
+  ```
+
+- Report any kept session/tab with session name and URL.
+
+Never run broad cleanup (`close-all`, `kill-all`, delete profile data) against shared Chrome Canary without explicit user approval.
 
 ## Verification Checklist
 
-Before reporting success, check the relevant criteria:
+Before reporting success, verify the relevant evidence:
 
-- `opencli chatgptx status -f json` works when patched commands are needed.
-- OpenCLI command output includes the expected `conversationUrl`, receipt path, rows, or status.
-- For brokered jobs, `chatgptx broker-status` shows `sent` or `done`, and `Output` exists for `done` jobs.
-- In Playwright fallback, `playwright-cli list` shows the intended session and `tab-list` shows no tab explosion.
+- `playwright-cli list --json` shows the intended attached session.
+- `tab-list` does not show uncontrolled tab explosion.
 - URL matches normal chat, Project, source page, or conversation as intended.
-- Browser snippets return parseable JSON.
-- For Project sources, `chatgptx project-source-list` shows the source before use and no visible row after delete tests.
-- For connectors, stop at auth gates unless authorized; record whether access was actually verified.
-- For model/effort, visible selected label matches the requested setting.
-- For worker farms, inspect receipt/harvest files, not sidebar titles.
+- Model/effort visible label matches the requested setting.
+- Tool/connector pill is visible when requested.
+- Send result contains a non-`/new` conversation URL.
+- Receipt JSON exists and includes prompt hash/task id, conversation URL, model/tool, sent time, `readAfterIso`, and output path.
+- Harvest output is from the latest assistant turn or Deep Research iframe, not just the user prompt.
+- Project sources are visibly present before use and removed after delete tests.
+- OAuth/auth gates were not crossed without explicit permission.
+- Screenshots/videos are redacted or scoped appropriately.
 
 If any criterion fails, report the failed step and do not generalize the operation as verified.

@@ -1,14 +1,6 @@
 {
   "name": "chatgpt",
   "kind": "personal",
-  "dependsOnSkills": ["opencli-usage", "browseruse", "playwright-cli"],
-  "dependsOnTools": [
-    {
-      "kind": "opencli-plugin",
-      "name": "chatgptx",
-      "path": "tools/opencli-plugin-chatgptx",
-      "verify": "opencli chatgptx status -f json",
-      "afterOpencliUpgrade": "opencli plugin uninstall chatgptx || true; opencli plugin install file://$ABS_PATH; opencli chatgptx status -f json"
-    }
-  ]
+  "dependsOnSkills": ["playwright-cli"],
+  "dependsOnTools": []
 }

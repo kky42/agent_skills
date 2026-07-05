@@ -137,3 +137,8 @@ skills:
   agents:
   - codex
   - claude-code
+- skill: pievo
+  source: kky42/pievo
+  agents:
+  - codex
+  - claude-code
