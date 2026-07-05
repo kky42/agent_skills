@@ -108,7 +108,7 @@ When checking or applying upstream updates:
 
 ## Skill-owned Tools
 
-A skill can own helper scripts under its directory, e.g. `skills/chatgpt/tools/playwright/`.
+A skill can own helper scripts under its directory, e.g. `skills/chatgpt/scripts/`.
 
 Only declare tools in `skill.meta.json` when they need an install/sync step. `skill-sync` currently knows how to install declared local OpenCLI plugins:
 

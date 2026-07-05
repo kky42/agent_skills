@@ -27,7 +27,7 @@ Compensate for these gaps yourself:
 
 | Missing in base `playwright-cli` | Required ChatGPT discipline |
 | --- | --- |
-| No account/browser mutex | Use `tools/playwright/chatgpt-pw-lock` before every browser mutation or harvest. |
+| No account/browser mutex | Use `scripts/chatgpt-pw-lock` before every browser mutation or harvest. |
 | No job receipts | Write receipt JSON for every sent prompt. |
 | No pacing/rate limit state | Enforce submit/access intervals and record cooldowns. |
 | No broker queue | For multi-agent or batch work, queue receipt files and run one browser operation at a time. |
@@ -103,7 +103,7 @@ Use the bundled lock helper before any operation that touches ChatGPT UI state: 
 
 ```bash
 export CHATGPT_PW_SESSION=${CHATGPT_PW_SESSION:-chatgpt-canary}
-export CHATGPT_PW_LOCK=${CHATGPT_PW_LOCK:-$HOME/.agents/skills/chatgpt/tools/playwright/chatgpt-pw-lock}
+export CHATGPT_PW_LOCK=${CHATGPT_PW_LOCK:-$HOME/.agents/skills/chatgpt/scripts/chatgpt-pw-lock}
 python3 "$CHATGPT_PW_LOCK" status --json
 ```
 
@@ -337,7 +337,7 @@ Use the bundled extractor after opening the conversation:
 ```bash
 playwright-cli -s="$CHATGPT_PW_SESSION" goto "$conversationUrl"
 playwright-cli --raw -s="$CHATGPT_PW_SESSION" run-code \
-  --filename=/Users/kky/dev/agent_skills/skills/chatgpt/tools/playwright/deep-research-extract-current.js \
+  --filename=/Users/kky/dev/agent_skills/skills/chatgpt/scripts/deep-research-extract-current.js \
   > /tmp/deep-research.json
 python3 - <<'PY'
 import json

@@ -96,7 +96,7 @@ Example of a local helper script used directly by a skill:
 skills/chatgpt/
   SKILL.md
   skill.meta.json
-  tools/playwright/deep-research-extract-current.js
+  scripts/deep-research-extract-current.js
 ```
 
 Example of an installable tool declaration, for skills that need one:

@@ -1,13 +1,13 @@
-# ChatGPT Playwright helpers
+# ChatGPT scripts
 
-Utilities used by `skills/chatgpt` when driving ChatGPT through `playwright-cli`.
+Utilities used by `skills/chatgpt` when driving ChatGPT through `playwright-cli`. These are skill-local scripts, not installable tools.
 
 ## `chatgpt-pw-lock`
 
 Local account/session lock for shared ChatGPT browser automation.
 
 ```bash
-export CHATGPT_PW_LOCK=${CHATGPT_PW_LOCK:-$HOME/.agents/skills/chatgpt/tools/playwright/chatgpt-pw-lock}
+export CHATGPT_PW_LOCK=${CHATGPT_PW_LOCK:-$HOME/.agents/skills/chatgpt/scripts/chatgpt-pw-lock}
 export CHATGPT_PW_SESSION=${CHATGPT_PW_SESSION:-chatgpt-canary}
 
 python3 "$CHATGPT_PW_LOCK" status --json
