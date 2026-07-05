@@ -1,114 +1,138 @@
 # agent_skills
 
-One place to manage global skills across Codex, Pi, and Claude Code.
+One place to manage global skills, their local patches, and skill-owned tools across Codex, Pi, and Claude Code.
 
 ![agent_skills skill flow](assets/intro.png)
 
 ## What Lives Here
 
-- `skills/` is where personal skills live.
-- `thirdparty-skills.yml` records third-party skills to install.
-- `scripts/` applies this setup to the current machine.
+- `skills/` is the canonical source for all active skills.
+  - Personal skills live in topical folders such as `skills/chatgpt/` and `skills/browseruse/`.
+  - Vendored third-party skills live in `skills/thirdparty/<skill>/`.
+- `skill.meta.json` records skill dependencies and tool/plugin dependencies.
+- `thirdparty-skills.yml` records upstream third-party sources to review.
+- `thirdparty-lock.json` records the last vendored provenance/hash from upstream installs.
+- `scripts/` links skills, checks dependency graphs, and installs skill-owned tools.
 
 ## Use It
 
 ```bash
 ./scripts/skill-sync
+./scripts/skill-deps check
 ```
 
-That command is safe to run repeatedly. It links personal skills into the agent
-runtime folders and applies the third-party skill manifest.
+`skill-sync` is safe to run repeatedly. It:
 
-If this machine already has skills installed by `npx skills`, import them first:
+1. validates `SKILL.md` names and `skill.meta.json` dependencies;
+2. links every repo skill into runtime folders such as `~/.agents/skills` and `~/.claude/skills`;
+3. installs declared skill-owned tools, such as OpenCLI plugins.
 
-```bash
-./scripts/skill-migrate
-```
+It does **not** run `npx skills` or blindly overwrite third-party skills from upstream.
 
 ## Daily Workflow
 
-For personal skills, add/edit/remove skill folders under `skills/`, then run:
+Add/edit/remove skills under `skills/`, then run:
 
 ```bash
-./scripts/skill-sync --personal-only
-```
-
-Personal skills are linked as flat folders such as
-`~/.agents/skills/kaggle` and `~/.claude/skills/kaggle`. Edits to an active
-linked skill are visible immediately; run `skill-sync` after adding, removing,
-or renaming skill folders. Use `--personal-only` when you do not want to spend
-time refreshing third-party skills.
-
-For one third-party skill, update `thirdparty-skills.yml` first, then run a
-targeted sync:
-
-```bash
-./scripts/skill-sync --thirdparty-only --install web-design-guidelines
-```
-
-Use `npx skills add <source> --list` only for discovery. The YAML file is the
-source of truth for add/remove decisions. `--install` installs or updates only
-the named skill from the manifest.
-
-Example:
-
-```yaml
-skills:
-  - skill: web-design-guidelines
-    source: vercel-labs/agent-skills
-    agents:
-      - codex
-      - claude-code
-```
-
-To remove a third-party skill, delete its YAML entry, then run:
-
-```bash
-./scripts/skill-sync --thirdparty-only --remove web-design-guidelines
-```
-
-Use the full `./scripts/skill-sync` when setting up a machine or intentionally
-reconciling every third-party skill. It removes any stale npx-managed skills and
-refreshes the full manifest.
-
-If an upstream skill disappears, `skill-sync` warns and continues with the rest
-of the manifest.
-
-Across machines, commit and push the repo after changing `skills/` or
-`thirdparty-skills.yml`. On another computer:
-
-```bash
-git pull
 ./scripts/skill-sync
 ```
 
-## Choose Your Agents
+Edits to linked skills are visible immediately because runtime folders point back to this repo. Run `skill-sync` after adding, removing, or renaming skill folders, or after adding a tool dependency.
 
-The `agents` list in `thirdparty-skills.yml` is passed to `npx skills --agent`.
-Change it to match the agents you use.
-
-```yaml
-agents:
-  - codex
-  - claude-code
-```
-
-On this setup, `codex` installs to `~/.agents/skills`, and Pi also reads that
-folder. Keep `pi` out of the third-party list unless you deliberately want a
-second Pi-native install under `~/.pi/agent/skills`.
-
-To see supported `npx skills` agent names, run:
+Useful commands:
 
 ```bash
-npx skills --help
+./scripts/skill-sync --skills-only   # links skills, skips tools
+./scripts/skill-sync --tools-only    # installs declared tools only
+./scripts/skill-sync --check         # validates without mutating
+./scripts/skill-deps list            # dependency graph summary
+./scripts/skill-deps why chatgpt     # reverse deps and tool deps
 ```
 
-Personal skill target folders are configured with `AGENT_SKILLS_SKILL_TARGETS`.
-The legacy `AGENT_HUB_SKILL_TARGETS` name is still accepted. The default is:
+Skill target folders are configured with `AGENT_SKILLS_SKILL_TARGETS`. The legacy `AGENT_HUB_SKILL_TARGETS` name is still accepted. Default:
 
 ```bash
 AGENT_SKILLS_SKILL_TARGETS="$HOME/.agents/skills:$HOME/.claude/skills"
 ```
 
-Set that variable before running `skill-sync` if your agents use different
-runtime folders.
+## Third-party Skill Updates
+
+Third-party skills are vendored and reviewed like code. Do not use `npx skills add` as an automatic updater.
+
+Update flow:
+
+1. Use `thirdparty-skills.yml` and `thirdparty-lock.json` to identify upstream source/path/hash.
+2. Fetch or inspect upstream in a temp checkout.
+3. Have an agent review the upstream diff against `skills/thirdparty/<skill>/`.
+4. Manually apply the desired upstream changes while preserving local patches.
+5. Update `thirdparty-lock.json` provenance/hash if the upstream content is accepted.
+6. Run:
+
+   ```bash
+   ./scripts/skill-deps check
+   ./scripts/skill-sync
+   git diff
+   ```
+
+Use `npx skills add <source> --list` only for discovery, not for updating this repo.
+
+## Skill-owned Tools
+
+A skill can own tool code under its directory. Example:
+
+```text
+skills/chatgpt/
+  SKILL.md
+  skill.meta.json
+  tools/opencli-plugin-chatgptx/
+    opencli-plugin.json
+    package.json
+    commands.js
+```
+
+The skill declares the tool in `skill.meta.json`:
+
+```json
+{
+  "name": "chatgpt",
+  "dependsOnSkills": ["opencli-usage", "browseruse", "playwright-cli"],
+  "dependsOnTools": [
+    {
+      "kind": "opencli-plugin",
+      "name": "chatgptx",
+      "path": "tools/opencli-plugin-chatgptx",
+      "verify": "opencli chatgptx status -f json"
+    }
+  ]
+}
+```
+
+`skill-sync` installs local OpenCLI plugins with `opencli plugin install file://...`. Local plugins are symlinked by OpenCLI, so source edits are reflected immediately; rerun `skill-sync` after changing plugin metadata or moving paths.
+
+After upgrading a dependency package such as OpenCLI, run:
+
+```bash
+npm install -g @jackwener/opencli
+./scripts/skill-sync --tools-only
+opencli chatgptx status -f json
+```
+
+## Dependency Safety
+
+Before deleting or renaming a skill, check reverse dependencies:
+
+```bash
+./scripts/skill-deps why opencli-usage
+```
+
+If another skill depends on it, update that downstream skill first. `skill-sync --check` fails when metadata references a missing upstream skill or missing tool path.
+
+## Across Machines
+
+Commit and push repo changes after changing `skills/`, `skill.meta.json`, tool code, or third-party provenance. On another machine:
+
+```bash
+git pull
+./scripts/skill-sync
+./scripts/skill-deps check
+```

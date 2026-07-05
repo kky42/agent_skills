@@ -1,3 +1,6 @@
+# Upstream sources for vendored third-party skills under skills/thirdparty/.
+# Do not use this file for blind npx installs; update vendored copies by
+# agent-reviewed upstream diffs and record provenance in thirdparty-lock.json.
 skills:
 - skill: diagnosing-bugs
   source: mattpocock/skills

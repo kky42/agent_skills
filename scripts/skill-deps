@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Inspect skill/tool dependencies for the agent_skills repository."""
+from __future__ import annotations
+
+import json
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+SKILLS = REPO / "skills"
+
+
+def skill_name(skill_md: Path) -> str:
+    return skill_md.parent.name
+
+
+def load_meta(skill_dir: Path) -> dict:
+    path = skill_dir / "skill.meta.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def discover():
+    skills = {}
+    metas = {}
+    for skill_md in sorted(SKILLS.rglob("SKILL.md")):
+        name = skill_name(skill_md)
+        if name in skills:
+            raise SystemExit(f"duplicate skill name: {name}\n  {skills[name]}\n  {skill_md.parent}")
+        skills[name] = skill_md.parent
+        meta = load_meta(skill_md.parent)
+        if meta:
+            metas[name] = meta
+    return skills, metas
+
+
+def build_graph(skills, metas):
+    deps = {name: set((metas.get(name, {}).get("dependsOnSkills") or [])) for name in skills}
+    reverse = defaultdict(set)
+    for name, names in deps.items():
+        for dep in names:
+            reverse[dep].add(name)
+    return deps, reverse
+
+
+def check(skills, metas):
+    errors = []
+    deps, _ = build_graph(skills, metas)
+    for name, names in deps.items():
+        for dep in sorted(names):
+            if dep not in skills:
+                errors.append(f"{name}: missing skill dependency {dep}")
+    for name, meta in sorted(metas.items()):
+        for tool in meta.get("dependsOnTools", []) or []:
+            if tool.get("kind") == "opencli-plugin":
+                path = skills[name] / tool.get("path", "")
+                if not path.exists():
+                    errors.append(f"{name}: missing opencli plugin path {path}")
+                if not (path / "opencli-plugin.json").exists():
+                    errors.append(f"{name}: missing opencli-plugin.json in {path}")
+    if errors:
+        print("dependency check failed:", file=sys.stderr)
+        for err in errors:
+            print(f"- {err}", file=sys.stderr)
+        return 1
+    print(f"ok: {len(skills)} skills, {len(metas)} metadata files")
+    return 0
+
+
+def list_deps(skills, metas):
+    deps, reverse = build_graph(skills, metas)
+    for name in sorted(skills):
+        ds = ", ".join(sorted(deps.get(name, []))) or "-"
+        rs = ", ".join(sorted(reverse.get(name, []))) or "-"
+        print(f"{name}\n  depends: {ds}\n  used by: {rs}")
+
+
+def why(skills, metas, name):
+    if name not in skills:
+        raise SystemExit(f"unknown skill: {name}")
+    deps, reverse = build_graph(skills, metas)
+    print(f"{name}: {skills[name]}")
+    print("depends on:")
+    for dep in sorted(deps.get(name, [])) or ["-"]:
+        print(f"  {dep}")
+    print("used by:")
+    for dep in sorted(reverse.get(name, [])) or ["-"]:
+        print(f"  {dep}")
+    meta = metas.get(name, {})
+    tools = meta.get("dependsOnTools") or []
+    if tools:
+        print("tools:")
+        for tool in tools:
+            label = tool.get("name") or tool.get("package") or tool.get("kind")
+            print(f"  {tool.get('kind')}: {label}")
+
+
+def dot(skills, metas):
+    deps, _ = build_graph(skills, metas)
+    print("digraph skills {")
+    for name in sorted(skills):
+        print(f'  "{name}";')
+    for name, names in sorted(deps.items()):
+        for dep in sorted(names):
+            print(f'  "{name}" -> "{dep}";')
+    print("}")
+
+
+def main(argv):
+    command = argv[1] if len(argv) > 1 else "check"
+    skills, metas = discover()
+    if command == "check":
+        return check(skills, metas)
+    if command == "list":
+        list_deps(skills, metas)
+        return 0
+    if command == "why":
+        if len(argv) != 3:
+            raise SystemExit("usage: scripts/skill-deps why <skill>")
+        why(skills, metas, argv[2])
+        return 0
+    if command == "dot":
+        dot(skills, metas)
+        return 0
+    raise SystemExit("usage: scripts/skill-deps [check|list|why <skill>|dot]")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

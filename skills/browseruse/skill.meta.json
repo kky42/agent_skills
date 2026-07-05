@@ -1,0 +1,13 @@
+{
+  "name": "browseruse",
+  "kind": "personal",
+  "dependsOnSkills": ["opencli-usage"],
+  "dependsOnTools": [
+    {
+      "kind": "npm-global",
+      "package": "@jackwener/opencli",
+      "version": ">=1.8.6",
+      "verify": "opencli doctor"
+    }
+  ]
+}
