@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+"""Small lock helper for the ChatGPT playwright-cli skill.
+
+The lock is a directory created with os.mkdir(), so acquisition is atomic on the
+local filesystem. `acquire` writes owner.json and prints a token. `release`
+removes the lock only when that token matches, unless --force is explicitly used.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+EXIT_BUSY = 75
+EXIT_USAGE = 64
+DEFAULT_SESSION = "chatgpt-canary"
+DEFAULT_TTL_SECONDS = 15 * 60
+
+
+def utc_iso(epoch: float | None = None) -> str:
+    if epoch is None:
+        epoch = time.time()
+    return datetime.fromtimestamp(epoch, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def state_dir(value: str | None) -> Path:
+    raw = value or os.environ.get("CHATGPT_PW_STATE") or "~/.local/state/chatgpt-playwright"
+    return Path(raw).expanduser().resolve()
+
+
+def sanitize_lock_name(name: str) -> str:
+    if not name:
+        raise SystemExit("lock name must not be empty")
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
+    if any(ch not in allowed for ch in name):
+        raise SystemExit(f"invalid lock name {name!r}; use letters, digits, '.', '_' or '-'")
+    return name
+
+
+def paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    root = state_dir(getattr(args, "state_dir", None))
+    lock_name = sanitize_lock_name(getattr(args, "lock_name", "account"))
+    return root, root / "locks" / f"{lock_name}.lock"
+
+
+def read_owner(lock_dir: Path) -> dict[str, Any] | None:
+    try:
+        with (lock_dir / "owner.json").open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else None
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        return None
+    except OSError:
+        return None
+
+
+def host_name() -> str:
+    return socket.gethostname()
+
+
+def pid_alive(pid: Any, owner_host: str | None) -> bool | None:
+    if owner_host and owner_host != host_name():
+        return None
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid_int <= 0:
+        return False
+    try:
+        os.kill(pid_int, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def process_group_alive(pgid: Any, owner_host: str | None) -> bool | None:
+    if owner_host and owner_host != host_name():
+        return None
+    try:
+        pgid_int = int(pgid)
+    except (TypeError, ValueError):
+        return False
+    if pgid_int <= 0:
+        return False
+    try:
+        os.killpg(pgid_int, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def public_owner(owner: dict[str, Any] | None, show_token: bool = False) -> dict[str, Any] | None:
+    if owner is None:
+        return None
+    visible = dict(owner)
+    if not show_token and "token" in visible:
+        visible["token"] = "<redacted>"
+    return visible
+
+
+def inspect_lock(lock_dir: Path, show_token: bool = False) -> dict[str, Any]:
+    if not lock_dir.exists():
+        return {"ok": True, "status": "free", "lockDir": str(lock_dir)}
+    if not lock_dir.is_dir():
+        return {"ok": False, "status": "blocked", "lockDir": str(lock_dir), "reason": "lock path exists but is not a directory"}
+
+    owner = read_owner(lock_dir)
+    if owner is None:
+        return {"ok": False, "status": "stale", "lockDir": str(lock_dir), "reason": "missing or invalid owner.json", "owner": None}
+
+    owner_pid = owner.get("ownerPid", owner.get("pid"))
+    pid_is_alive = pid_alive(owner_pid, owner.get("host"))
+    pgid_is_alive = process_group_alive(owner.get("ownerPgid"), owner.get("host"))
+    alive = True if pid_is_alive or pgid_is_alive else (None if pid_is_alive is None or pgid_is_alive is None else False)
+    now = time.time()
+    expires = owner.get("expiresAtEpoch")
+    expired = False
+    try:
+        expired = expires is not None and now > float(expires)
+    except (TypeError, ValueError):
+        expired = False
+
+    if alive is False:
+        status = "stale"
+        reason = "owner process is not alive"
+        ok = False
+    elif expired:
+        status = "expired"
+        reason = "ttl exceeded"
+        ok = False
+    else:
+        status = "held"
+        reason = "owner process is alive" if alive else "owner process is on another host or unknown"
+        ok = True
+
+    return {
+        "ok": ok,
+        "status": status,
+        "lockDir": str(lock_dir),
+        "reason": reason,
+        "ownerAlive": alive,
+        "ownerPidAlive": pid_is_alive,
+        "ownerPgidAlive": pgid_is_alive,
+        "expired": expired,
+        "owner": public_owner(owner, show_token=show_token),
+    }
+
+
+def emit(data: dict[str, Any], json_mode: bool, *, stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    if json_mode:
+        print(json.dumps(data, ensure_ascii=False, sort_keys=True), file=stream)
+        return
+    status = data.get("status", "unknown")
+    lock_dir = data.get("lockDir", "")
+    reason = data.get("reason")
+    if data.get("ok") is False:
+        prefix = "not ok"
+    else:
+        prefix = "ok"
+    line = f"{prefix}: {status} {lock_dir}".rstrip()
+    if reason:
+        line += f" ({reason})"
+    if data.get("token"):
+        line += f" token={data['token']}"
+    print(line, file=stream)
+
+
+def remove_lock(lock_dir: Path) -> None:
+    shutil.rmtree(lock_dir)
+
+
+def write_owner(lock_dir: Path, owner: dict[str, Any]) -> None:
+    tmp = lock_dir / "owner.json.tmp"
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(owner, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, lock_dir / "owner.json")
+
+
+def acquire_once(args: argparse.Namespace, *, owner_pid: int, command: list[str] | None = None) -> tuple[bool, dict[str, Any]]:
+    root, lock_dir = paths(args)
+    (root / "locks").mkdir(parents=True, exist_ok=True)
+
+    try:
+        lock_dir.mkdir()
+    except FileExistsError:
+        info = inspect_lock(lock_dir)
+        if info["status"] == "stale" and getattr(args, "break_stale", True):
+            remove_lock(lock_dir)
+            return acquire_once(args, owner_pid=owner_pid, command=command)
+        if info["status"] == "expired" and getattr(args, "break_expired", False):
+            remove_lock(lock_dir)
+            return acquire_once(args, owner_pid=owner_pid, command=command)
+        return False, info
+
+    now = time.time()
+    ttl = int(getattr(args, "ttl", DEFAULT_TTL_SECONDS) or DEFAULT_TTL_SECONDS)
+    token = uuid.uuid4().hex
+    owner = {
+        "schemaVersion": 1,
+        "lockName": getattr(args, "lock_name", "account"),
+        "token": token,
+        "owner": getattr(args, "owner", None) or os.environ.get("USER") or "unknown",
+        "ownerPid": owner_pid,
+        "ownerPgid": os.getpgrp(),
+        "processPid": os.getpid(),
+        "parentPid": os.getppid(),
+        "host": host_name(),
+        "cwd": os.getcwd(),
+        "session": getattr(args, "session", None) or os.environ.get("CHATGPT_PW_SESSION") or DEFAULT_SESSION,
+        "startedAtEpoch": now,
+        "startedAtIso": utc_iso(now),
+        "ttlSeconds": ttl,
+        "expiresAtEpoch": now + ttl,
+        "expiresAtIso": utc_iso(now + ttl),
+        "command": command or [],
+    }
+    try:
+        write_owner(lock_dir, owner)
+    except Exception:
+        shutil.rmtree(lock_dir, ignore_errors=True)
+        raise
+
+    return True, {
+        "ok": True,
+        "status": "acquired",
+        "lockDir": str(lock_dir),
+        "token": token,
+        "owner": public_owner(owner, show_token=True),
+    }
+
+
+def command_status(args: argparse.Namespace) -> int:
+    _, lock_dir = paths(args)
+    emit(inspect_lock(lock_dir, show_token=getattr(args, "show_token", False)), args.json)
+    return 0
+
+
+def command_acquire(args: argparse.Namespace) -> int:
+    deadline = time.time() + max(0, float(args.wait or 0))
+    owner_pid = os.getpid() if args.owner_pid == "self" else os.getppid()
+    while True:
+        acquired, info = acquire_once(args, owner_pid=owner_pid)
+        if acquired:
+            emit(info, args.json)
+            return 0
+        if time.time() >= deadline:
+            emit({"ok": False, "status": "busy", **info}, args.json, stream=sys.stderr)
+            return EXIT_BUSY
+        time.sleep(min(2.0, max(0.1, deadline - time.time())))
+
+
+def release_with_token(args: argparse.Namespace, token: str | None, *, force: bool = False) -> tuple[bool, dict[str, Any]]:
+    _, lock_dir = paths(args)
+    info = inspect_lock(lock_dir, show_token=True)
+    if info["status"] == "free":
+        return True, {"ok": True, "status": "free", "lockDir": str(lock_dir), "reason": "no lock to release"}
+
+    owner = read_owner(lock_dir)
+    owner_token = owner.get("token") if owner else None
+    if token and owner_token == token:
+        remove_lock(lock_dir)
+        return True, {"ok": True, "status": "released", "lockDir": str(lock_dir)}
+
+    if force:
+        if getattr(args, "if_stale", False) and info.get("status") != "stale":
+            return False, {"ok": False, "status": "not-released", "lockDir": str(lock_dir), "reason": f"lock is {info.get('status')}, not stale", "owner": info.get("owner")}
+        if getattr(args, "if_expired", False) and info.get("status") != "expired":
+            return False, {"ok": False, "status": "not-released", "lockDir": str(lock_dir), "reason": f"lock is {info.get('status')}, not expired", "owner": info.get("owner")}
+        remove_lock(lock_dir)
+        return True, {"ok": True, "status": "force-released", "lockDir": str(lock_dir), "previous": info}
+
+    return False, {"ok": False, "status": "not-owned", "lockDir": str(lock_dir), "reason": "token mismatch or missing token", "owner": public_owner(owner)}
+
+
+def command_release(args: argparse.Namespace) -> int:
+    token = args.token or os.environ.get("CHATGPT_PW_LOCK_TOKEN")
+    ok, info = release_with_token(args, token, force=args.force)
+    emit(info, args.json, stream=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
+def command_run(args: argparse.Namespace) -> int:
+    cmd = list(args.command or [])
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    if not cmd:
+        print("run requires a command after --", file=sys.stderr)
+        return EXIT_USAGE
+
+    args.owner_pid = "self"
+    acquired, info = acquire_once(args, owner_pid=os.getpid(), command=cmd)
+    if not acquired:
+        emit({"ok": False, "status": "busy", **info}, args.json, stream=sys.stderr)
+        return EXIT_BUSY
+
+    token = info["token"]
+    emit(info, False, stream=sys.stderr)
+    env = os.environ.copy()
+    env["CHATGPT_PW_LOCK_TOKEN"] = token
+    try:
+        proc = subprocess.run(cmd, env=env)
+        return proc.returncode
+    finally:
+        ok, release_info = release_with_token(args, token, force=False)
+        emit(release_info, False, stream=sys.stderr)
+        if not ok:
+            print("warning: failed to release ChatGPT playwright lock", file=sys.stderr)
+
+
+def add_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--state-dir", default=None, help="state dir (default: $CHATGPT_PW_STATE or ~/.local/state/chatgpt-playwright)")
+    parser.add_argument("--lock-name", default="account", help="lock name under state/locks (default: account)")
+    parser.add_argument("--json", action="store_true", help="emit JSON")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="ChatGPT playwright-cli account lock helper")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    status = sub.add_parser("status", help="show lock status")
+    add_common(status)
+    status.add_argument("--show-token", action="store_true", help="include lock token in status output")
+    status.set_defaults(func=command_status)
+
+    acquire = sub.add_parser("acquire", help="acquire the lock and print a release token")
+    add_common(acquire)
+    acquire.add_argument("--session", default=os.environ.get("CHATGPT_PW_SESSION") or DEFAULT_SESSION)
+    acquire.add_argument("--owner", default=None, help="human-readable owner label")
+    acquire.add_argument("--ttl", type=int, default=DEFAULT_TTL_SECONDS, help="TTL seconds for diagnostics (default: 900)")
+    acquire.add_argument("--wait", type=float, default=0, help="wait up to N seconds for the lock")
+    acquire.add_argument("--owner-pid", choices=["parent", "self"], default="parent", help="which process owns the lock after acquire (default: parent shell)")
+    acquire.add_argument("--no-break-stale", dest="break_stale", action="store_false", default=True, help="do not auto-remove locks whose owner process is dead")
+    acquire.add_argument("--break-expired", action="store_true", help="remove an expired lock even if the owner process may still exist")
+    acquire.set_defaults(func=command_acquire)
+
+    release = sub.add_parser("release", help="release the lock by token")
+    add_common(release)
+    release.add_argument("--token", default=None, help="token returned by acquire; defaults to $CHATGPT_PW_LOCK_TOKEN")
+    release.add_argument("--force", action="store_true", help="release without a token; use only when you own the browser state")
+    release.add_argument("--if-stale", action="store_true", help="with --force, release only if owner process is dead/missing")
+    release.add_argument("--if-expired", action="store_true", help="with --force, release only if TTL expired")
+    release.set_defaults(func=command_release)
+
+    run = sub.add_parser("run", help="acquire lock, run a command, then release")
+    add_common(run)
+    run.add_argument("--session", default=os.environ.get("CHATGPT_PW_SESSION") or DEFAULT_SESSION)
+    run.add_argument("--owner", default=None, help="human-readable owner label")
+    run.add_argument("--ttl", type=int, default=DEFAULT_TTL_SECONDS, help="TTL seconds for diagnostics (default: 900)")
+    run.add_argument("--no-break-stale", dest="break_stale", action="store_false", default=True)
+    run.add_argument("--break-expired", action="store_true")
+    run.add_argument("command", nargs=argparse.REMAINDER, help="command to run after --")
+    run.set_defaults(func=command_run)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args))
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

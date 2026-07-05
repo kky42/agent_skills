@@ -27,7 +27,7 @@ Compensate for these gaps yourself:
 
 | Missing in base `playwright-cli` | Required ChatGPT discipline |
 | --- | --- |
-| No account/browser mutex | Use the lock protocol below before every browser mutation or harvest. |
+| No account/browser mutex | Use `tools/playwright/chatgpt-pw-lock` before every browser mutation or harvest. |
 | No job receipts | Write receipt JSON for every sent prompt. |
 | No pacing/rate limit state | Enforce submit/access intervals and record cooldowns. |
 | No broker queue | For multi-agent or batch work, queue receipt files and run one browser operation at a time. |
@@ -99,22 +99,43 @@ Recovery:
 
 ## Lock Protocol
 
-Use a local lock before any operation that touches ChatGPT UI state: opening/selecting tabs, changing model/tool, filling composer, sending, retrying, reading a still-changing answer, adding/deleting sources, or closing tabs.
+Use the bundled lock helper before any operation that touches ChatGPT UI state: opening/selecting tabs, changing model/tool, filling composer, sending, retrying, reading a still-changing answer, adding/deleting sources, or closing tabs.
 
 ```bash
-export CHATGPT_PW_STATE=${CHATGPT_PW_STATE:-$HOME/.local/state/chatgpt-playwright}
-lock="$CHATGPT_PW_STATE/locks/account.lock"
-mkdir -p "$CHATGPT_PW_STATE/locks" "$CHATGPT_PW_STATE/receipts" "$CHATGPT_PW_STATE/outputs"
-if ! mkdir "$lock" 2>/dev/null; then
-  echo "ChatGPT browser is busy: $lock" >&2
-  cat "$lock/owner.json" 2>/dev/null || true
-  exit 75
-fi
-cat > "$lock/owner.json" <<EOF
-{"pid":$$,"cwd":"$PWD","session":"${CHATGPT_PW_SESSION:-chatgpt-canary}","started_at":"$(date -u +%FT%TZ)"}
-EOF
-trap 'rm -rf "$lock"' EXIT
+export CHATGPT_PW_SESSION=${CHATGPT_PW_SESSION:-chatgpt-canary}
+export CHATGPT_PW_LOCK=${CHATGPT_PW_LOCK:-$HOME/.agents/skills/chatgpt/tools/playwright/chatgpt-pw-lock}
+python3 "$CHATGPT_PW_LOCK" status --json
+```
+
+For a single browser command, prefer `run`; it acquires and releases automatically:
+
+```bash
+python3 "$CHATGPT_PW_LOCK" run --session "$CHATGPT_PW_SESSION" -- \
+  playwright-cli -s="$CHATGPT_PW_SESSION" tab-list
+```
+
+For a multi-command critical section, acquire once and release with the returned token. Keep acquire/release in the same shell block; do not acquire in one tool call and release in a later tool call.
+
+```bash
+lock_json=$(python3 "$CHATGPT_PW_LOCK" acquire \
+  --session "$CHATGPT_PW_SESSION" \
+  --owner "${USER:-agent}:$$" \
+  --wait 300 \
+  --json)
+lock_token=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])' <<<"$lock_json")
+trap 'python3 "$CHATGPT_PW_LOCK" release --token "$lock_token" >/dev/null || true' EXIT
+
 # browser mutation or harvest here
+
+python3 "$CHATGPT_PW_LOCK" release --token "$lock_token"
+trap - EXIT
+```
+
+If a previous process crashed, inspect first, then let the helper release only stale locks:
+
+```bash
+python3 "$CHATGPT_PW_LOCK" status --json
+python3 "$CHATGPT_PW_LOCK" release --force --if-stale
 ```
 
 Rules:
@@ -122,7 +143,8 @@ Rules:
 - The lock protects browser/account interaction, not the entire model generation time.
 - Release the lock immediately after send is accepted and the receipt is saved.
 - Reacquire the lock for each harvest attempt, then release it again.
-- If a lock looks stale, inspect `owner.json` and the process before removing it. Never delete another active agent's lock blindly.
+- Use the helper for stale cleanup; do not `rm -rf` lock directories by hand.
+- Do not force-release an active lock unless the user explicitly authorizes taking over the browser.
 - Do not ask parallel agents to drive the same `CHATGPT_PW_SESSION`. Parallel agents may prepare prompts or analyze outputs, but a single broker/driver should touch the browser.
 
 ## Tab Lease Discipline
@@ -494,6 +516,7 @@ Never run broad cleanup (`close-all`, `kill-all`, delete profile data) against s
 
 Before reporting success, verify the relevant evidence:
 
+- `python3 "$CHATGPT_PW_LOCK" status --json` is checked when browser state may be shared, and no active lock was force-released without authorization.
 - `playwright-cli list --json` shows the intended attached session.
 - `tab-list` does not show uncontrolled tab explosion.
 - URL matches normal chat, Project, source page, or conversation as intended.
