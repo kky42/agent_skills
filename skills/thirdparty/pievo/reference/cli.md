@@ -38,17 +38,24 @@ pievo daemon status              # is it running; pievo_home; the daemon's packa
 pievo daemon start [--foreground] [--no-dashboard] [--dashboard-host HOST] [--dashboard-port PORT] [--dashboard-token TOKEN]
 pievo daemon restart             # in-place restart/upgrade; detached run workers survive
 pievo daemon stop
+pievo daemon upgrade [--target v] # full-fleet upgrade: pause all loops (work killed, effects drain), spawn a detached
+                                  # upgrader (npm i -g, then daemon bounce), then the NEW daemon's tick resumes each
+                                  # stopped loop once its in-flight effects have drained. Durable state machine in
+                                  # PIEVO_HOME/upgrade.json (upgrading→restarting→resuming→done, or failed — a failed
+                                  # upgrade still restarts the current version and resumes loops: roll-forward).
+                                  # config.daemon.upgrade_command overrides the npm command; config.daemon.tick_seconds
+                                  # sets the scheduler tick (default 30).
 pievo doctor                     # environment + state-root health (flags synced/networked PIEVO_HOME)
 pievo help
 ```
 
 Mutating loop commands (`apply`, `run-now`, lifecycle changes) are routed to the daemon over local IPC. If the daemon is unavailable, they return `daemon_required` with a `next` action; start it or explicitly set `PIEVO_ALLOW_LOCAL_MUTATIONS=1` for local-only mutation.
 
-Daemon-dispatched runs execute in detached `pievo-worker` processes (their own process group), so a daemon restart or crash never kills in-flight runs; leases + heartbeats + pid liveness recover abandoned runs afterwards. Drain is the default upgrade story: `pievo loop pause` the loops you care about (or just `pievo daemon restart` and let workers finish), then resume. `daemon status` reports the daemon's package version so you can spot version skew after an upgrade.
+Daemon-dispatched runs execute in detached `pievo-worker` processes (their own process group), so a daemon restart or crash never kills in-flight runs; leases + heartbeats + pid liveness recover abandoned runs afterwards. Two upgrade stories: **rolling** — `pievo daemon restart` after installing the new version (in-flight workers finish under the old code, new runs get new code); **clean-stop** — `pievo daemon upgrade` (or the dashboard button) for the fully automated stop-all → npm → bounce → gated-resume flow when you don't want mixed versions. `daemon status` reports the daemon's package version so you can spot version skew.
 
 #### Web dashboard
 
-`pievo daemon start` also brings up the **web dashboard — the operator console** (loops overview, per-loop runs/metrics/decisions/actions/audit/events, and a "needs attention" panel that aggregates blocked/paused loops, failed runs, open questions, pending approvals, and engaged effect circuit breakers). It also mutates: pause/stop/resume a loop, approve/reject effect actions, answer inbox questions, and submit free-form feedback — authenticated POSTs over the same durable ledgers as the CLI, so both stay in sync.
+`pievo daemon start` also brings up the **web dashboard — the operator console** (loops overview, per-loop runs/metrics/decisions/actions/audit/events, and a "needs attention" panel that aggregates blocked/paused loops, failed runs, open questions, pending approvals, engaged effect circuit breakers, truth debt, broken dispatch probes, goal changes, and upgrade progress). It also mutates: pause / start / **stop now** per loop, **pause all / start all** fleet buttons, per-run **stop** on running work-class runs, the **upgrade** button (full flow above), approve/reject effect actions, answer inbox questions, and submit free-form feedback — authenticated POSTs over the same durable ledgers as the CLI, so both stay in sync. Paused loops show a "draining N effects" chip until in-flight effects settle.
 
 - **Open it**: `pievo daemon status` returns `data.daemon.dashboard = { enabled, host, port, url, token, require_token }`. Open `url` in a browser.
 - **Auth**: a **loopback bind (default `127.0.0.1`) needs no token for reads** — the URL is just `http://127.0.0.1:4319/` — because the socket is only reachable from the same host, and a spoofed `Host` header is rejected so DNS-rebinding can't bypass it. **Mutating POSTs always require the dashboard token** (the in-page controls send it automatically). A **non-loopback bind requires a token for everything**, and `url` then embeds it, so LAN exposure stays gated.
@@ -63,9 +70,14 @@ pievo loop scaffold --preset kaggle-runtime|runtime-cost|release-publish --name 
 pievo loop preflight <bundle-dir> [--workspace <path>]      # pure validation; repeat until ok:true
 pievo repo adopt     <bundle-dir> [--workspace <repo>] [--branch main]   # managed mode (recommended); --workspace defaults to cwd
 pievo loop apply     <bundle-dir> [--workspace <path>] [--managed --branch <b>] [--wait-seconds N]
-pievo loop pause   <name>            # drain: no new dispatch; in-flight runs finish but cannot promote or fire effects
-pievo loop stop    <name>            # abort: paused with pause_kind=operator_abort; SIGTERMs the run's worker process groups, escalates SIGKILL
-pievo loop resume  <name>
+pievo loop pause   <name>            # == stop: kill work-class workers (their keeps are fail-closed anyway), DRAIN in-flight effects, pause
+pievo loop stop    <name> [--now]    # same verb; --now is the emergency breaker: effects are killed too → their actions become
+                                     # unknown_outcome + an effect_interrupted inbox question (verify externally, then answer resolved)
+pievo loop stop    --all [--now]     # fleet pause; skips non-active loops and reports them
+pievo loop resume  <name>            # sets active and clears pause_kind/auto_pause_reason
+pievo loop resume  --all             # resumes ONLY loops with pause_kind=operator_abort; auto_paused/blocked are skipped with reasons
+pievo loop cancel-run <name> <run-id> # kill ONE running work-class run; the loop keeps going. Effects refuse (effect_cancel_unsupported)
+                                     # — use stop --now. A canceled run can never land a keep at finalize (run_canceled).
 pievo loop archive <name>                                   # records-only; name stays reserved; refuses while live runs exist
 pievo loop purge   <name>                                   # deletes state; frees the name (archived loops only, no live workers)
 ```
