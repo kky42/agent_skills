@@ -182,12 +182,22 @@ python scripts/chatgpt_pwcli_farm.py --session chatgpt batch-harvest \
 
 Hard rules:
 
+- For Project-source workers, plant only into the Project URL; ordinary `https://chatgpt.com/` chats cannot see Project Sources.
+- Verify Project sources before planting (`sources-status` or equivalent browser evidence). For validation-heavy workers, include the data they need (for NeuroGolf, canonical plus extended/fresh ARC-GEN JSONs), not just commands to generate it.
 - At least 90 seconds between sends.
 - At least 30 seconds between harvest reads.
 - At most 25 active planted sessions.
 - Every plant writes a receipt with conversation URL and `readAfterIso`.
+- For repeated prompt variants on the same task, use an attempt/session key (for example `--attempt-id`) instead of overwriting the active session.
 - Every harvest writes raw JSON/Markdown.
 - If a chat is still generating, keep it active and harvest again later.
+
+Prompt quality rules for implementation workers:
+
+- Optimize prompts for free exploration plus runnable artifacts, not visible thinking time.
+- Require complete solver/patch code in the answer; no code means reject/replant.
+- Require source evidence and a public audit log, not private chain-of-thought.
+- Require workers to distinguish commands actually run from proposed validation commands.
 
 Validation covered manual plant, batch plant, single harvest, and batch harvest with spacing.
 
