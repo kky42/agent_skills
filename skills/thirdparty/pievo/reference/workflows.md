@@ -65,12 +65,12 @@ The work workflow proposes. It does not grade itself. **Eval failure ⇒ discard
   "run": { "id": "run_...", "dir": "...", "workspace_dir": "...", "artifact_dir": "..." },
   "measurement": {}, "goals": [], "audit": {}, "contracts": {},
   "snapshots": [],
-  "feedback": { "answers": [{ "question_id": "q_...", "kind": "user_feedback", "prompt": "...", "answer": "...", "answered_at": "..." }] },
   "effect": {}    // effect targets only: the approved action row (action_ref, hashes, keys, payload_ref)
 }
 ```
 
-`feedback.answers` carries every answered operator-inbox item — questions answered via `pievo loop answer` or the dashboard, plus free-form dashboard feedback. Read it and steer the next candidate accordingly.
+Operator input is not injected into workflow args. Change intent by applying a new
+bundle, and resolve action/outcome facts through typed lifecycle verbs.
 
 ## Result ABI by target
 
@@ -111,7 +111,7 @@ Approval is spec policy: proposals land as `awaiting_approval` unless the LoopSp
 - If `schema` is supplied to `agent()`, the returned value is parsed as the structured result.
 - Use `parallel(() => agent(...))` and `pipeline(...)` only when the work genuinely benefits from concurrency.
 
-Isolation honesty: until OS sandboxing ships, a bash-capable subagent is only *asked* to stay in its lane. The enforced boundary is post-hoc — git status/diff on the run worktree, eval anchor hashes, surface contracts, payload containment, CAS promotion, and effect gating. No security theater.
+Isolation honesty: until OS sandboxing ships, a bash-capable subagent is only *asked* to stay in its lane. The enforced boundary is post-hoc — git status/diff on the run worktree, eval anchor hashes, surface `denyWrite` audits, payload containment, CAS promotion, and effect gating. No security theater.
 
 ## Local eval provenance
 

@@ -333,13 +333,15 @@
         "claude-code"
       ],
       "skillPath": "skills/pievo/SKILL.md",
-      "skillFolderHash": "6572e9c3d82e58e1474d3ecd5e848431c53b8ea6",
+      "skillFolderHash": "8f1f96b232d16f02e5d6f8a856d2de85bca0ca49",
       "sourceUrl": "https://github.com/kky42/pievo.git",
       "sourceRef": "origin/main",
-      "sourceCommit": "8fd8047ded5f12fc7222b812b5e610836cc75b57",
+      "sourceCommit": "519a53712aeedeb2eee045654b8c5b8ed755db87",
       "sourceWorktreeDirty": false,
-      "updatedAt": "2026-07-05T15:09:48.965632Z",
-      "vendoredPath": "skills/thirdparty/pievo"
+      "updatedAt": "2026-07-06T16:49:48.785281Z",
+      "vendoredPath": "skills/thirdparty/pievo",
+      "vendoredFolderHash": "8f1f96b232d16f02e5d6f8a856d2de85bca0ca49",
+      "localPatch": false
     }
   }
 }
