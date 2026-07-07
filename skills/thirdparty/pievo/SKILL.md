@@ -1,6 +1,6 @@
 ---
 name: pievo
-description: "pievo loops — design, build, and operate durable metric-driven optimization loops through the installed pievo CLI. Use when the user wants a self-improving loop created, optimized, or managed (Kaggle/benchmark tuning, content growth with real-engagement truth, model hyperparameter search, runtime-cost reduction), mentions pievo / `pievo loop` / a LoopBundle, or needs help turning a fuzzy optimization goal into a sound loop design."
+description: "Use for pievo loops: create/manage LoopBundles, run or inspect durable metric loops, operate dashboard/actions/budgets, or map Kaggle/benchmark/publishing goals to pievo."
 ---
 
 # pievo
@@ -15,6 +15,15 @@ pievo daemon status   # is it running?
 ```
 
 Every CLI command prints **one JSON envelope** to stdout. Parse that, not prose.
+
+---
+
+## Operating roles
+
+- One daemon per host. Start it once; every foreground agent uses that same daemon.
+- The operator starts/stops the daemon, watches the dashboard, approves/rejects actions, resolves unknown outcomes, and records observations.
+- A foreground agent runs in the target workspace with `pi -p`; it authors, applies, repairs, and operates its own LoopBundle through the existing daemon.
+- For real E2E, do not hand-create or hand-fix the loop unless the test is explicitly about operator intervention.
 
 ---
 
@@ -109,8 +118,9 @@ After each work run, core makes a decision per candidate:
 | Decision class | Meaning |
 |---|---|
 | `primary_improved` | Primary metric improved (or met target) |
-| `auxiliary_improved` | Primary unchanged, auxiliary metric better |
-| `provisional_auxiliary` | Truth pending, kept provisionally — capped by `decision.provisional_quota.perDay` (over-quota candidates are discarded with `provisional_quota_exhausted`) |
+| `secondary_improved` | Primary unchanged, secondary metric better |
+| `provisional_primary` | Truth pending, proxy-primary improved — capped by `decision.provisional_quota.perDay` |
+| `provisional_secondary` | Truth pending, proxy-primary did not regress and a secondary metric improved — capped by `decision.provisional_quota.perDay` |
 | `invariant_preserved` | Gate mode (`decision.mode: "gate"`) only: every goal met its explicit target — maintenance work lands without beating any record. Identical-tree candidates are still discarded (`no_change`) |
 | `discard` | Didn't meet goals |
 
@@ -188,13 +198,13 @@ Or:
    - **Maintaining an invariant instead of maximizing?** (deps current, CI green,
      docs build) → `decision.mode: "gate"` with an explicit `target` per goal;
      candidates land when every target holds (`invariant_preserved`).
-2. **What else matters?** → runtime, cost, token count → `auxiliary` goals (opportunistic secondary metrics, not hard constraints)
+2. **What else matters?** → runtime, cost, token count → `secondary` goals (immediate local tie-breakers, not hard constraints)
 3. **How do you measure?** → script you run → becomes a `core_check`
    - Can you trust it locally? → `identity` mode
    - Or do you need delayed external truth? → `proxy` mode (truth expensive? tighten the effect's `action_quota`)
 4. **What external actions are needed?** → Kaggle submit, publish, deploy → `effect_handler`
    - How many per day? → `action_quota` contract
-5. **What constraints exist today?** → "each run ≤ 600s" → `timeout_minutes`; "don't change candidate-owned files" → `contracts.surface.denyWrite`. First-class metric constraints/guardrails are roadmap work, not current LoopSpec surface.
+5. **What constraints exist today?** → quality/runtime/cost floors → `restriction` goals (immediate local guardrails); "each run ≤ 600s" → `timeout_minutes`; "don't change candidate-owned files" → `contracts.surface.denyWrite`.
 6. **How long / how much should this run?** → `campaign.max_wall_minutes` / `max_iterations` / `max_cost_usd` — limits met automatically pauses the loop; `campaign.daily_cost_usd` caps per-day spend without pausing
 7. **Should it idle cheaply?** (long-lived maintenance loops) → `entrypoints.work.dispatch_probe` — an anchored script the daemon runs each cadence boundary; work is dispatched only when the probe exits 10 ("debt present"), so no agent wakes up just to find nothing to do
 
@@ -202,8 +212,8 @@ Or:
 
 | User says | Pievo equivalent |
 |---|---|
-| "Score 7800.94, don't regress" | `primary` goal `local_score`, `source: local_eval`, `target: 7800.94` |
-| "Reduce runtime from 30min to 20min" | `auxiliary` goal `local_runtime_seconds`, `higher_is_better: false`; this tracks opportunistic runtime gains, not a hard keep constraint |
+| "Score 7800.94, don't regress" | `primary` truth goal `lb_score` with `proxy_metric_name: "local_score"` and a local score target/proxy target if needed |
+| "Reduce runtime from 30min to 20min" | `secondary` goal `local_runtime_seconds`, `higher_is_better: false`; use `restriction` instead if runtime is a hard floor |
 | "Local eval script measures score + runtime" | `core_check` with `eval_anchor` on generation-owned script |
 | "Submit to Kaggle to verify" | `effect_handler: kaggle_submit` with `action_quota`; `truth` workflow pulls LB |
 | "Don't change the eval script" | `core_check.eval_anchor` with a generation-owned evaluator |
@@ -315,8 +325,8 @@ Required fields:
       "repair": { "workflow": "workflows/repair.js" }
     },
     "measurement": { "metrics": { ... }, "calibration": { "mode": "identity|proxy" } },
-    "goals": [ { "name": "...", "kind": "primary|auxiliary", "metric_name": "...", "source": "local_eval|truth", "higher_is_better": true|false } ],
-    "decision": { "allow_auxiliary_keeps": true, ... },
+    "goals": [ { "name": "...", "kind": "primary|secondary|restriction", "metric_name": "...", "source": "local_eval|truth", "higher_is_better": true|false } ],
+    "decision": { "allow_secondary_keeps": true, ... },
     "effects": { "<kind>": { "approval": "manual|auto" } },
     "contracts": { ... },
     "audit": { ... }
@@ -424,7 +434,7 @@ The scorecard now has two sections:
 
 ### Scores (one primary pair)
 
-One primary metric rules the loop. In proxy mode the single primary goal is the truth metric and exactly one local metric declares `calibrates_to` it — preflight enforces the pair, everything else is auxiliary. `loop health` → `scores` (and the dashboard Scores box) reports: the best **verified** primary score with the proxy value that predicted it (a best proxy score alone is meaningless), Spearman ρ over recent proxy↔truth pairs (paired by `candidate_id`, proxy values gated to the current eval ver), and recent candidates with their pending/verified truth values. Identity mode: just the best local primary. Gate (maintenance) loops get an invariant view instead — per-goal current value vs target with holding/broken status, a recent ✓/✗ strip, and the last violation — because "best" is noise for an invariant. No scored goals: the dashboard falls back to the latest work run's check results.
+One primary metric rules the loop. In proxy mode the single primary goal is the truth metric and exactly one local metric is its proxy via `proxy_metric_name` on the goal or `calibrates_to` on the metric — preflight enforces the pair, and that proxy is primary evidence rather than a `secondary` goal. `loop health` → `scores` (and the dashboard Scores box) reports: the best **verified** primary score with the proxy value that predicted it (a best proxy score alone is meaningless), Spearman ρ over recent proxy↔truth pairs (paired by `candidate_id`, proxy values gated to the current eval ver), and recent candidates with their pending/verified truth values. Identity mode: just the best local primary. Gate (maintenance) loops get an invariant view instead — per-goal current value vs target with holding/broken status, a recent ✓/✗ strip, and the last violation — because "best" is noise for an invariant. No scored goals: the dashboard falls back to the latest work run's check results.
 
 ### Contracts
 
