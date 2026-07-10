@@ -3,9 +3,11 @@
 One place to manage global agent skills across Codex, Pi, and Claude Code. Every skill is either a **mirror** (exact copy of an upstream directory, replaced wholesale on update) or **owned** (this repo is authoritative). Runtime dirs (`~/.agents/skills`, `~/.claude/skills`) are flat symlinks into `skills/`.
 
 ```bash
-./scripts/skills apply    # link skills into the runtime dirs
-./scripts/skills doctor   # health report (--remote checks upstreams)
-./scripts/skills update <skill>
+./scripts/skills apply            # link skills into the runtime dirs
+./scripts/skills doctor           # health report (--remote checks upstreams)
+./scripts/skills update <skill>   # check upstream delta; --apply replaces a mirror, --record-review logs an owned review
+./scripts/skills verify [skill]   # run declared dependency checks (incl. reverse dependents)
+./scripts/skills list             # skill inventory: ownership, sources, dependencies
 ```
 
 Operating rules for agents: [`AGENTS.md`](AGENTS.md).
