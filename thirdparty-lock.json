@@ -1,5 +1,0 @@
-{
-  "version": 1,
-  "note": "Legacy v1 provenance is retired; active ownership and review state live in skill-manifest.json and skill-lock.json.",
-  "skills": {}
-}

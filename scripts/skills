@@ -1,0 +1,1659 @@
+#!/usr/bin/env python3
+"""Manage this repository's skills.
+
+Subcommands:
+  apply    link every skill into the runtime skill directories
+  doctor   read-only health report; --remote also checks upstream freshness
+  update   check a skill's sources; --apply replaces a mirror, --record-review
+           records an owned source review
+  verify   run declared dependency verify commands (a skill argument also
+           selects its reverse dependents)
+  list     one entry per skill: ownership, source, relations
+
+The model is deliberately small: `skills/**/<name>/SKILL.md` is the content,
+`skill-manifest.json` declares explicit ownership (mirror | owned) and typed
+relations, and `skill-lock.json` records mirror sync state and the latest
+owned-source review receipt. Mirrors are exact replaceable upstream copies;
+owned skills are local-authoritative and never receive upstream merges.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+from collections import defaultdict
+from contextlib import contextmanager
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+MANIFEST_NAME = "skill-manifest.json"
+LOCK_NAME = "skill-lock.json"
+RELATION_TYPES = {"content-source", "reference", "skill-dependency", "tool-dependency"}
+UPDATE_POLICIES = {"manual", "compatible", "latest", "pinned"}
+ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+
+REPO_ROOT = Path(
+    os.environ.get("AGENT_SKILLS_REPO_ROOT", Path(__file__).resolve().parents[1])
+).resolve()
+DEFAULT_TARGETS = "~/.agents/skills:~/.claude/skills"
+
+
+class CliError(Exception):
+    """Raised for invalid model state or failed operations."""
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def run(command: list[str], *, cwd: Path | None = None) -> str:
+    process = subprocess.run(
+        command, cwd=str(cwd) if cwd else None, text=True, capture_output=True
+    )
+    if process.returncode != 0:
+        detail = (process.stderr or process.stdout or "").strip()
+        raise CliError(f"command failed ({process.returncode}): {' '.join(command)}\n{detail}")
+    return (process.stdout or "").strip()
+
+
+# --------------------------------------------------------------------------
+# Model
+# --------------------------------------------------------------------------
+
+def frontmatter_name(skill_md: Path) -> str | None:
+    lines = skill_md.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return None
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        if key.strip() == "name":
+            value = value.split(" #", 1)[0].strip().strip("'\"")
+            return value or None
+    return None
+
+
+@dataclass
+class SkillRecord:
+    name: str
+    path: Path
+    relative_path: str
+    ownership: str
+    ownership_explicit: bool
+    mirror: dict[str, Any] | None
+    relations: list[dict[str, Any]]
+
+    @property
+    def skill_dependencies(self) -> list[str]:
+        return [
+            relation["skill"]
+            for relation in self.relations
+            if relation.get("type") == "skill-dependency" and relation.get("skill")
+        ]
+
+    @property
+    def source_relations(self) -> list[dict[str, Any]]:
+        return [
+            relation
+            for relation in self.relations
+            if relation.get("type") in {"content-source", "reference"}
+        ]
+
+    @property
+    def dependency_relations(self) -> list[dict[str, Any]]:
+        return [
+            relation
+            for relation in self.relations
+            if relation.get("type") in {"skill-dependency", "tool-dependency"}
+        ]
+
+
+@dataclass
+class Catalog:
+    root: Path
+    sources: dict[str, dict[str, Any]]
+    skills: dict[str, SkillRecord]
+    manifest: dict[str, Any]
+    lock: dict[str, Any]
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise CliError(f"{path}: invalid JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise CliError(f"{path}: expected a JSON object")
+    return value
+
+
+def discover_skills(root: Path) -> dict[str, Path]:
+    skills_root = root / "skills"
+    discovered: dict[str, Path] = {}
+    if not skills_root.exists():
+        return discovered
+    for skill_md in sorted(skills_root.rglob("SKILL.md")):
+        name = skill_md.parent.name
+        if name in discovered:
+            raise CliError(
+                f"duplicate skill name: {name}\n  {discovered[name]}\n  {skill_md.parent}"
+            )
+        declared = frontmatter_name(skill_md)
+        if declared is None:
+            raise CliError(f"{skill_md}: missing frontmatter name")
+        if declared != name:
+            raise CliError(
+                f"{skill_md}: frontmatter name {declared!r} does not match directory name {name!r}"
+            )
+        discovered[name] = skill_md.parent.resolve()
+    return discovered
+
+
+def load_catalog(root: Path | str | None = None, *, validate: bool = True) -> Catalog:
+    root = Path(root).resolve() if root else REPO_ROOT
+    manifest_path = root / MANIFEST_NAME
+    lock_path = root / LOCK_NAME
+    for required in (manifest_path, lock_path):
+        if not required.exists():
+            raise CliError(f"required model file is missing: {required}")
+    manifest = load_json(manifest_path)
+    lock = load_json(lock_path)
+    discovered = discover_skills(root)
+
+    raw_sources = manifest.get("sources")
+    raw_skills = manifest.get("skills")
+    sources = deepcopy(raw_sources) if isinstance(raw_sources, dict) else {}
+    entries = raw_skills if isinstance(raw_skills, dict) else {}
+
+    skills: dict[str, SkillRecord] = {}
+    for name, path in sorted(discovered.items()):
+        entry = entries.get(name) or {}
+        if not isinstance(entry, dict):
+            raise CliError(f"{manifest_path}: skills.{name} must be an object")
+        relations = deepcopy(entry.get("relations")) if isinstance(entry.get("relations"), list) else []
+        skills[name] = SkillRecord(
+            name=name,
+            path=path,
+            relative_path=path.relative_to(root).as_posix(),
+            ownership=str(entry.get("ownership", "owned")),
+            ownership_explicit=name in entries,
+            mirror=deepcopy(entry.get("mirror")),
+            relations=relations,
+        )
+
+    catalog = Catalog(root=root, sources=sources, skills=skills, manifest=manifest, lock=lock)
+    if validate:
+        errors = validate_catalog(catalog)
+        if errors:
+            raise CliError("skill model validation failed:\n- " + "\n- ".join(errors))
+    return catalog
+
+
+# --------------------------------------------------------------------------
+# Validation
+# --------------------------------------------------------------------------
+
+def _safe_path(value: Any) -> bool:
+    if not isinstance(value, str) or not value or value.startswith("/"):
+        return False
+    return ".." not in PurePosixPath(value).parts
+
+
+def _safe_path_list(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(_safe_path(item) for item in value)
+        and len(value) == len(set(value))
+    )
+
+
+def _valid_datetime(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_verify(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(command, list)
+        and bool(command)
+        and all(isinstance(argument, str) for argument in command)
+        for command in value
+    )
+
+
+def _unknown(value: dict[str, Any], allowed: set[str], label: str) -> list[str]:
+    unknown = set(value) - allowed
+    return [f"{label}: unknown fields {sorted(unknown)}"] if unknown else []
+
+
+def _validate_locator(locator: Any, sources: dict[str, Any], label: str) -> list[str]:
+    if not isinstance(locator, dict):
+        return [f"{label}: source locator must be an object"]
+    errors = _unknown(locator, {"source", "path", "ref"}, label)
+    if locator.get("source") not in sources:
+        errors.append(f"{label}: unknown source {locator.get('source')!r}")
+    if not _safe_path(locator.get("path")):
+        errors.append(f"{label}: source path must be a safe relative directory")
+    if locator.get("ref") is not None and not (
+        isinstance(locator.get("ref"), str) and locator.get("ref")
+    ):
+        errors.append(f"{label}: source ref must be a non-empty string")
+    return errors
+
+
+def _validate_relation(relation: Any, sources: dict[str, Any], label: str) -> list[str]:
+    if not isinstance(relation, dict):
+        return [f"{label}: expected an object"]
+    errors: list[str] = []
+    relation_type = relation.get("type")
+    if relation_type not in RELATION_TYPES:
+        return [f"{label}: unknown type {relation_type!r}"]
+    if relation_type in {"content-source", "reference"}:
+        errors += _unknown(relation, {"id", "type", "source", "watch"}, label)
+        errors += _validate_locator(relation.get("source"), sources, label)
+        watch = relation.get("watch")
+        if watch is not None and not isinstance(watch, dict):
+            errors.append(f"{label}: watch must be an object")
+        elif isinstance(watch, dict):
+            errors += _unknown(watch, {"include", "exclude", "localPaths", "localConcerns"}, f"{label} watch")
+            for key in ("include", "exclude", "localPaths"):
+                if key in watch and not (
+                    isinstance(watch[key], list)
+                    and all(_safe_path(item) for item in watch[key])
+                    and len(watch[key]) == len(set(watch[key]))
+                ):
+                    errors.append(f"{label}: watch.{key} must be an array of unique safe patterns")
+            concerns = watch.get("localConcerns", [])
+            if not isinstance(concerns, list) or any(
+                not (
+                    isinstance(concern, dict)
+                    and set(concern) <= {"id", "description"}
+                    and isinstance(concern.get("id"), str)
+                    and concern.get("id")
+                    and isinstance(concern.get("description"), str)
+                    and concern.get("description")
+                )
+                for concern in concerns
+            ):
+                errors.append(f"{label}: watch.localConcerns must be objects with id and description")
+    elif relation_type == "skill-dependency":
+        errors += _unknown(relation, {"id", "type", "skill", "verify"}, label)
+    else:
+        errors += _unknown(relation, {"id", "type", "tool", "updatePolicy", "verify"}, label)
+        tool = relation.get("tool")
+        if not isinstance(tool, dict) or not tool.get("kind"):
+            errors.append(f"{label}: tool.kind is required")
+        if relation.get("updatePolicy") is not None and relation["updatePolicy"] not in UPDATE_POLICIES:
+            errors.append(f"{label}: invalid updatePolicy {relation.get('updatePolicy')!r}")
+    if relation.get("verify") is not None and not _valid_verify(relation.get("verify")):
+        errors.append(f"{label}: verify must be an array of argv arrays")
+    return errors
+
+
+def _validate_receipt_decisions(state: dict[str, Any], label: str) -> list[str]:
+    errors: list[str] = []
+    for decision_type, extra_key in (("accepted", "localPaths"), ("skipped", None)):
+        decisions = state.get(decision_type)
+        if not isinstance(decisions, list):
+            errors.append(f"{label}: {decision_type} must be an array")
+            continue
+        for index, decision in enumerate(decisions):
+            decision_label = f"{label} {decision_type}[{index}]"
+            allowed = {"upstreamPaths", "localPaths", "note"} if extra_key else {"upstreamPaths", "reason"}
+            if not isinstance(decision, dict):
+                errors.append(f"{decision_label}: expected an object")
+                continue
+            errors += _unknown(decision, allowed, decision_label)
+            if not _safe_path_list(decision.get("upstreamPaths")):
+                errors.append(f"{decision_label}: upstreamPaths must contain unique safe paths")
+            if extra_key:
+                if not _safe_path_list(decision.get("localPaths")):
+                    errors.append(f"{decision_label}: localPaths must contain unique safe paths")
+                if not isinstance(decision.get("note"), str) or not decision.get("note"):
+                    errors.append(f"{decision_label}: note must be a non-empty string")
+            elif not isinstance(decision.get("reason"), str) or not decision.get("reason"):
+                errors.append(f"{decision_label}: reason must be a non-empty string")
+    return errors
+
+
+def _validate_lock(lock: dict[str, Any], catalog: Catalog) -> list[str]:
+    errors = _unknown(lock, {"schemaVersion", "skills"}, LOCK_NAME)
+    if lock.get("schemaVersion") != 1:
+        errors.append(f"{LOCK_NAME}: schemaVersion must be 1")
+    skills = lock.get("skills")
+    if not isinstance(skills, dict):
+        return errors + [f"{LOCK_NAME}: skills must be an object"]
+    for name, state in sorted(skills.items()):
+        label = f"{LOCK_NAME} skill {name!r}"
+        record = catalog.skills.get(name)
+        if record is None:
+            errors.append(f"{label}: unknown skill")
+            continue
+        if not isinstance(state, dict):
+            errors.append(f"{label}: state must be an object")
+            continue
+        errors += _unknown(state, {"mirror", "relations"}, label)
+        mirror = state.get("mirror")
+        if mirror is not None:
+            if record.ownership != "mirror":
+                errors.append(f"{label}: owned skill cannot have mirror state")
+            required = {"resolvedCommit", "sourcePath", "treeHash", "syncedAt"}
+            if not isinstance(mirror, dict):
+                errors.append(f"{label}: mirror state must be an object")
+                continue
+            errors += _unknown(mirror, required, f"{label} mirror")
+            missing = sorted(required - set(mirror))
+            if missing:
+                errors.append(f"{label} mirror: missing fields {missing}")
+            if len(str(mirror.get("resolvedCommit", ""))) < 7:
+                errors.append(f"{label} mirror: resolvedCommit must be at least 7 characters")
+            if not str(mirror.get("treeHash", "")).startswith("sha256:"):
+                errors.append(f"{label} mirror: treeHash must be sha256")
+            if "syncedAt" in mirror and not _valid_datetime(mirror.get("syncedAt")):
+                errors.append(f"{label} mirror: syncedAt must be an ISO date-time")
+        relations = state.get("relations", {})
+        if not isinstance(relations, dict):
+            errors.append(f"{label}: relations state must be an object")
+            continue
+        if record.ownership == "mirror" and relations:
+            errors.append(f"{label}: mirror skill cannot have relation review state")
+        valid_ids = {relation.get("id") for relation in record.source_relations}
+        for relation_id, relation_state in relations.items():
+            relation_label = f"{label} relation {relation_id!r}"
+            if relation_id not in valid_ids:
+                errors.append(f"{relation_label}: no such source relation")
+            if not isinstance(relation_state, dict):
+                errors.append(f"{relation_label}: state must be an object")
+                continue
+            required = {
+                "relationFingerprint", "sourceId", "sourcePath", "sourceRef",
+                "lastReviewedCommit", "reviewedAt", "accepted", "skipped",
+            }
+            errors += _unknown(relation_state, required | {"note"}, relation_label)
+            missing = sorted(required - set(relation_state))
+            if missing:
+                errors.append(f"{relation_label}: missing fields {missing}")
+            if not str(relation_state.get("relationFingerprint", "")).startswith("sha256:"):
+                errors.append(f"{relation_label}: relationFingerprint must be sha256")
+            if len(str(relation_state.get("lastReviewedCommit", ""))) < 7:
+                errors.append(f"{relation_label}: lastReviewedCommit must be at least 7 characters")
+            if "reviewedAt" in relation_state and not _valid_datetime(relation_state.get("reviewedAt")):
+                errors.append(f"{relation_label}: reviewedAt must be an ISO date-time")
+            errors += _validate_receipt_decisions(relation_state, relation_label)
+    return errors
+
+
+def _cycle_errors(skills: dict[str, SkillRecord]) -> list[str]:
+    state: dict[str, int] = {}
+    stack: list[str] = []
+    errors: list[str] = []
+
+    def visit(name: str) -> None:
+        status = state.get(name, 0)
+        if status == 2:
+            return
+        if status == 1:
+            start = stack.index(name)
+            errors.append("skill dependency cycle: " + " -> ".join(stack[start:] + [name]))
+            return
+        state[name] = 1
+        stack.append(name)
+        for dependency in skills[name].skill_dependencies:
+            if dependency in skills:
+                visit(dependency)
+        stack.pop()
+        state[name] = 2
+
+    for name in sorted(skills):
+        visit(name)
+    return errors
+
+
+def validate_catalog(catalog: Catalog) -> list[str]:
+    manifest = catalog.manifest
+    errors = _unknown(manifest, {"schemaVersion", "sources", "skills"}, MANIFEST_NAME)
+    if manifest.get("schemaVersion") != 1:
+        errors.append(f"{MANIFEST_NAME}: schemaVersion must be 1")
+    if not isinstance(manifest.get("sources"), dict):
+        errors.append(f"{MANIFEST_NAME}: sources must be an object")
+    if not isinstance(manifest.get("skills"), dict):
+        errors.append(f"{MANIFEST_NAME}: skills must be an object")
+
+    for source_id, source in sorted(catalog.sources.items()):
+        label = f"{MANIFEST_NAME} source {source_id!r}"
+        if not isinstance(source, dict):
+            errors.append(f"{label}: expected an object")
+            continue
+        errors += _unknown(source, {"kind", "url", "defaultRef"}, label)
+        if source.get("kind") != "git":
+            errors.append(f"{label}: kind must be 'git'")
+        if not isinstance(source.get("url"), str) or not source.get("url"):
+            errors.append(f"{label}: url is required")
+        if source.get("defaultRef") is not None and not (
+            isinstance(source.get("defaultRef"), str) and source.get("defaultRef")
+        ):
+            errors.append(f"{label}: defaultRef must be a non-empty string")
+
+    entries = manifest.get("skills") if isinstance(manifest.get("skills"), dict) else {}
+    for name in sorted(entries):
+        if name not in catalog.skills:
+            errors.append(f"{MANIFEST_NAME}: unknown skill entry {name!r}")
+
+    for name, record in sorted(catalog.skills.items()):
+        label = f"skill {name!r}"
+        entry = entries.get(name) or {}
+        if record.ownership not in {"mirror", "owned"}:
+            errors.append(f"{label}: ownership must be mirror or owned")
+            continue
+        if isinstance(entry, dict) and entry:
+            allowed = {"path", "ownership", "mirror"} if record.ownership == "mirror" else {"path", "ownership", "relations"}
+            errors += _unknown(entry, allowed, f"{MANIFEST_NAME} skill {name!r}")
+            if "relations" in entry and not isinstance(entry.get("relations"), list):
+                errors.append(f"{MANIFEST_NAME} skill {name!r}: relations must be an array")
+            declared_path = entry.get("path")
+            if declared_path is not None and declared_path != record.relative_path:
+                errors.append(
+                    f"{label}: manifest path {declared_path!r} does not match {record.relative_path!r}"
+                )
+        if record.ownership == "mirror":
+            if record.mirror is None:
+                errors.append(f"{label}: mirror ownership requires mirror source")
+            else:
+                errors += _validate_locator(record.mirror, catalog.sources, f"{label} mirror")
+            if record.relations:
+                errors.append(f"{label}: mirror skills cannot declare relations")
+            continue
+        relation_ids: set[str] = set()
+        for index, relation in enumerate(record.relations):
+            relation_id = relation.get("id") if isinstance(relation, dict) else None
+            relation_label = f"{label} relation {relation_id if relation_id else index!r}"
+            if not isinstance(relation_id, str) or not ID_RE.fullmatch(relation_id):
+                errors.append(f"{relation_label}: invalid relation id")
+            elif relation_id in relation_ids:
+                errors.append(f"{label}: duplicate relation id {relation_id!r}")
+            relation_ids.add(relation_id)
+            errors += _validate_relation(relation, catalog.sources, relation_label)
+            if isinstance(relation, dict) and relation.get("type") == "skill-dependency":
+                if relation.get("skill") not in catalog.skills:
+                    errors.append(f"{relation_label}: missing skill dependency {relation.get('skill')!r}")
+
+    errors += _cycle_errors(catalog.skills)
+    errors += _validate_lock(catalog.lock, catalog)
+    return errors
+
+
+def dependency_graph(catalog: Catalog) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    dependencies = {
+        name: set(record.skill_dependencies) for name, record in catalog.skills.items()
+    }
+    reverse: dict[str, set[str]] = defaultdict(set)
+    for name, names in dependencies.items():
+        for dependency in names:
+            reverse[dependency].add(name)
+    return dependencies, reverse
+
+
+# --------------------------------------------------------------------------
+# Directory snapshots and exact git materialization (mirror safety core)
+# --------------------------------------------------------------------------
+
+def directory_snapshot(root: Path | None) -> dict[str, tuple[str, bytes]]:
+    if root is None or not root.exists():
+        return {}
+    snapshot: dict[str, tuple[str, bytes]] = {}
+
+    def walk(directory: Path, prefix: str = "") -> None:
+        for entry in sorted(os.scandir(directory), key=lambda item: item.name):
+            relative = prefix + entry.name
+            mode = entry.stat(follow_symlinks=False).st_mode
+            if stat.S_ISDIR(mode):
+                walk(Path(entry.path), relative + "/")
+            elif stat.S_ISLNK(mode):
+                snapshot[relative] = (
+                    "symlink",
+                    os.readlink(entry.path).encode("utf-8", errors="surrogateescape"),
+                )
+            elif stat.S_ISREG(mode):
+                kind = "executable" if mode & stat.S_IXUSR else "file"
+                snapshot[relative] = (kind, Path(entry.path).read_bytes())
+            else:
+                raise CliError(f"unsupported filesystem entry in skill directory: {entry.path}")
+
+    walk(root)
+    return snapshot
+
+
+def snapshot_hash(snapshot: dict[str, tuple[str, bytes]]) -> str:
+    digest = hashlib.sha256()
+
+    def field(value: bytes) -> None:
+        digest.update(len(value).to_bytes(8, "big"))
+        digest.update(value)
+
+    digest.update(len(snapshot).to_bytes(8, "big"))
+    for relative, (kind, content) in sorted(snapshot.items()):
+        field(relative.encode("utf-8", errors="surrogateescape"))
+        field(kind.encode("ascii"))
+        field(content)
+    return "sha256:" + digest.hexdigest()
+
+
+def folder_hash(root: Path) -> str:
+    return snapshot_hash(directory_snapshot(root))
+
+
+def git_object_exists(repo: Path, commit: str, path: str | None = None) -> bool:
+    spec = f"{commit}:{path}" if path else f"{commit}^{{commit}}"
+    process = subprocess.run(
+        ["git", "cat-file", "-e", spec],
+        cwd=str(repo),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return process.returncode == 0
+
+
+def export_directory(repo: Path, commit: str, source_dir: str, destination: Path) -> None:
+    """Materialize the exact tracked git directory (no archive attributes/filters)."""
+    source_dir = PurePosixPath(source_dir).as_posix().rstrip("/")
+    if source_dir in {"", "."}:
+        raise CliError("root-level source directories are not supported")
+    if not git_object_exists(repo, commit, source_dir):
+        raise CliError(f"source directory missing: {commit}:{source_dir}")
+    process = subprocess.run(
+        ["git", "ls-tree", "-rz", "--full-tree", commit, "--", source_dir],
+        cwd=str(repo),
+        capture_output=True,
+    )
+    if process.returncode != 0:
+        detail = process.stderr.decode("utf-8", errors="replace").strip()
+        raise CliError(f"failed to list {commit}:{source_dir}: {detail}")
+    if destination.exists() or destination.is_symlink():
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
+        else:
+            destination.unlink()
+    destination.mkdir(parents=True, exist_ok=True)
+    prefix = source_dir.encode("utf-8", errors="surrogateescape") + b"/"
+    expected: dict[str, tuple[str, bytes]] = {}
+    for record in process.stdout.split(b"\0"):
+        if not record:
+            continue
+        header, separator, raw_path = record.partition(b"\t")
+        if not separator:
+            raise CliError(f"unexpected git ls-tree record for {source_dir!r}")
+        mode, object_type, object_id = header.decode("ascii").split()
+        if raw_path == source_dir.encode("utf-8", errors="surrogateescape"):
+            continue
+        if not raw_path.startswith(prefix):
+            raise CliError(f"git returned path outside tracked source directory: {raw_path!r}")
+        relative = raw_path[len(prefix):].decode("utf-8", errors="surrogateescape")
+        relative_path = PurePosixPath(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise CliError(f"unsafe path in git source: {relative!r}")
+        target = destination / relative
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise CliError(f"cannot represent git path {source_dir}/{relative}: {error}") from error
+        if os.path.lexists(target):
+            raise CliError(f"git paths collide on this filesystem at {source_dir}/{relative}; fail closed")
+        if object_type == "commit" or mode == "160000":
+            raise CliError(f"git submodule entries are not supported in skill sources: {source_dir}/{relative}")
+        if object_type != "blob":
+            continue
+        blob = subprocess.run(
+            ["git", "cat-file", "blob", object_id], cwd=str(repo), capture_output=True
+        )
+        if blob.returncode != 0:
+            raise CliError(f"failed to read git blob {object_id}")
+        content = blob.stdout
+        if mode == "120000":
+            kind = "symlink"
+            os.symlink(content.decode("utf-8", errors="surrogateescape"), target)
+        elif mode in {"100644", "100755"}:
+            kind = "executable" if mode == "100755" else "file"
+            target.write_bytes(content)
+            target.chmod(0o755 if mode == "100755" else 0o644)
+        else:
+            raise CliError(f"unsupported git mode {mode} at {source_dir}/{relative}")
+        expected[relative] = (kind, content)
+    if not expected:
+        raise CliError(f"source directory has no tracked files: {commit}:{source_dir}")
+    actual = directory_snapshot(destination)
+    if actual != expected:
+        missing = sorted(set(expected) - set(actual))
+        extra = sorted(set(actual) - set(expected))
+        changed = sorted(path for path in set(actual) & set(expected) if actual[path] != expected[path])
+        raise CliError(
+            "filesystem cannot exactly materialize the git directory; "
+            f"missing={missing}, extra={extra}, changed={changed}"
+        )
+
+
+def directory_diff(left: Path | None, right: Path) -> list[dict[str, str]]:
+    left_files = directory_snapshot(left)
+    right_files = directory_snapshot(right)
+    changes: list[dict[str, str]] = []
+    for relative in sorted(set(left_files) | set(right_files)):
+        if relative not in left_files:
+            changes.append({"status": "added", "path": relative})
+        elif relative not in right_files:
+            changes.append({"status": "removed", "path": relative})
+        elif left_files[relative] != right_files[relative]:
+            changes.append({"status": "modified", "path": relative})
+    return changes
+
+
+def glob_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a small path glob where * never crosses '/' and ** may."""
+    pattern = pattern.removeprefix("./")
+    pieces = ["^"]
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "*":
+            if index + 1 < len(pattern) and pattern[index + 1] == "*":
+                index += 2
+                if index < len(pattern) and pattern[index] == "/":
+                    pieces.append("(?:.*/)?")
+                    index += 1
+                else:
+                    pieces.append(".*")
+                continue
+            pieces.append("[^/]*")
+        elif char == "?":
+            pieces.append("[^/]")
+        else:
+            pieces.append(re.escape(char))
+        index += 1
+    pieces.append("$")
+    return re.compile("".join(pieces))
+
+
+def scoped_changes(changes: list[dict[str, str]], watch: dict[str, Any] | None) -> list[dict[str, str]]:
+    watch = watch or {}
+    include = [glob_regex(pattern) for pattern in (watch.get("include") or ["**"])]
+    exclude = [glob_regex(pattern) for pattern in (watch.get("exclude") or [])]
+    return [
+        change
+        for change in changes
+        if any(pattern.fullmatch(change["path"]) for pattern in include)
+        and not any(pattern.fullmatch(change["path"]) for pattern in exclude)
+    ]
+
+
+# --------------------------------------------------------------------------
+# Lock access
+# --------------------------------------------------------------------------
+
+def effective_ref(catalog: Catalog, locator: dict[str, Any]) -> str:
+    source = catalog.sources.get(locator.get("source")) or {}
+    return locator.get("ref") or source.get("defaultRef") or "origin/HEAD"
+
+
+def relation_fingerprint(catalog: Catalog, relation: dict[str, Any]) -> str:
+    locator = relation.get("source") or {}
+    source = catalog.sources.get(locator.get("source")) or {}
+    payload = {
+        "type": relation.get("type"),
+        "source": {
+            "id": locator.get("source"),
+            "url": source.get("url"),
+            "path": locator.get("path"),
+            "ref": effective_ref(catalog, locator),
+        },
+        "watch": relation.get("watch") or {},
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def lock_state(catalog: Catalog, skill: str) -> dict[str, Any]:
+    return (catalog.lock.get("skills") or {}).get(skill) or {}
+
+
+def write_lock(catalog: Catalog, lock: dict[str, Any]) -> None:
+    previous = catalog.lock
+    catalog.lock = lock
+    try:
+        errors = validate_catalog(catalog)
+    finally:
+        catalog.lock = previous
+    if errors:
+        raise CliError("refusing to write invalid skill-lock.json:\n- " + "\n- ".join(errors))
+    path = catalog.root / LOCK_NAME
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(path)
+    catalog.lock = lock
+
+
+# --------------------------------------------------------------------------
+# apply: runtime symlinks
+# --------------------------------------------------------------------------
+
+def target_roots() -> list[Path]:
+    raw = os.environ.get("AGENT_SKILLS_SKILL_TARGETS") or DEFAULT_TARGETS
+    roots = [Path(os.path.expanduser(item)).resolve() for item in raw.split(os.pathsep) if item]
+    if not roots:
+        raise CliError("AGENT_SKILLS_SKILL_TARGETS must contain at least one target directory")
+    return roots
+
+
+def _managed(path: Path, catalog: Catalog, roots: list[Path]) -> bool:
+    for parent in [catalog.root / "skills", *roots]:
+        try:
+            path.relative_to(parent)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def check_links(catalog: Catalog) -> list[str]:
+    errors = []
+    roots = target_roots()
+    for root in roots:
+        if not root.is_dir():
+            errors.append(f"missing runtime skill root: {root}")
+            continue
+        for name, record in sorted(catalog.skills.items()):
+            target = root / name
+            if not target.is_symlink():
+                kind = "missing" if not target.exists() else "not a symlink"
+                errors.append(f"{target}: {kind}")
+            elif target.resolve(strict=False) != record.path:
+                errors.append(f"{target}: points to {target.resolve(strict=False)}, expected {record.path}")
+        for child in root.iterdir():
+            if not child.is_symlink() or child.name in catalog.skills:
+                continue
+            if _managed(child.resolve(strict=False), catalog, roots):
+                errors.append(f"stale runtime skill link: {child} -> {child.resolve(strict=False)}")
+    return errors
+
+
+def apply_links(catalog: Catalog) -> int:
+    roots = target_roots()
+    for root in roots:
+        root.mkdir(parents=True, exist_ok=True)
+        for child in root.iterdir():
+            if not child.is_symlink():
+                continue
+            linked = child.resolve(strict=False)
+            stale_deleted = child.name not in catalog.skills and _managed(linked, catalog, roots)
+            stale_repo_link = (
+                child.name in catalog.skills
+                and _managed(linked, catalog, roots)
+                and linked != catalog.skills[child.name].path
+            )
+            if stale_deleted or stale_repo_link:
+                child.unlink()
+                print(f"removed stale skill link: {child}", flush=True)
+        for name, record in sorted(catalog.skills.items()):
+            target = root / name
+            if target.is_symlink():
+                if target.resolve(strict=False) == record.path:
+                    continue
+                raise CliError(
+                    f"{target} is an unmanaged symlink to {os.readlink(target)}; remove it and re-run"
+                )
+            if target.exists():
+                raise CliError(f"{target} already exists and is not an agent_skills symlink; remove it and re-run")
+            os.symlink(record.path, target, target_is_directory=True)
+            print(f"linked skill: {target} -> {record.path}", flush=True)
+    print(f"apply complete: {len(catalog.skills)} skills -> {len(roots)} runtime roots", flush=True)
+    return 0
+
+
+# --------------------------------------------------------------------------
+# verify: dependency compatibility
+# --------------------------------------------------------------------------
+
+def parse_semver(value: str) -> tuple[int, int, int] | None:
+    match = re.match(r"^[vV]?(\d+)\.(\d+)\.(\d+)", value)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def version_satisfies(version: str, constraint: str) -> bool | None:
+    """Support plain X.Y.Z and space/comma-joined >=,<=,>,<,= clauses."""
+    actual = parse_semver(version)
+    if actual is None:
+        return None
+    constraint = constraint.strip()
+    if constraint in {"", "*", "latest"}:
+        return True
+    for clause in re.split(r"[ ,]+", constraint):
+        if not clause:
+            continue
+        match = re.fullmatch(r"(>=|<=|>|<|=)?[vV]?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", clause)
+        if not match:
+            return None
+        operator = match.group(1) or "="
+        expected = tuple(int(part) for part in match.groups()[1:])
+        satisfied = {
+            ">=": actual >= expected,
+            "<=": actual <= expected,
+            ">": actual > expected,
+            "<": actual < expected,
+            "=": actual == expected,
+        }[operator]
+        if not satisfied:
+            return False
+    return True
+
+
+def npm_global_version(package: str) -> tuple[str | None, str | None]:
+    try:
+        process = subprocess.run(["npm", "root", "-g"], text=True, capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, str(error)
+    if process.returncode != 0:
+        return None, (process.stderr or process.stdout).strip()
+    package_json = Path(process.stdout.strip()) / package / "package.json"
+    if not package_json.exists():
+        return None, f"global npm package is not installed: {package}"
+    try:
+        version = json.loads(package_json.read_text(encoding="utf-8")).get("version")
+    except (OSError, json.JSONDecodeError) as error:
+        return None, str(error)
+    if not isinstance(version, str):
+        return None, f"{package_json}: version is missing"
+    return version, None
+
+
+def affected_skills(catalog: Catalog, name: str | None) -> list[str]:
+    if name is None:
+        return sorted(catalog.skills)
+    if name not in catalog.skills:
+        raise CliError(f"unknown skill: {name}")
+    _, reverse = dependency_graph(catalog)
+    selected = {name}
+    queue = [name]
+    while queue:
+        for dependent in sorted(reverse.get(queue.pop(0), [])):
+            if dependent not in selected:
+                selected.add(dependent)
+                queue.append(dependent)
+    return sorted(selected)
+
+
+def run_verify(catalog: Catalog, name: str | None) -> dict[str, Any]:
+    selected = affected_skills(catalog, name)
+    checks: list[dict[str, Any]] = []
+    unchecked: list[dict[str, Any]] = []
+    for skill_name in selected:
+        record = catalog.skills[skill_name]
+        for relation in record.dependency_relations:
+            relation_id = relation.get("id")
+            declared = len(checks)
+            tool = relation.get("tool") or {}
+            if relation.get("type") == "tool-dependency" and tool.get("kind") == "npm-global" and tool.get("package"):
+                version, error = npm_global_version(tool["package"])
+                constraint = tool.get("constraint") or "*"
+                satisfies = None if error else version_satisfies(version, constraint)
+                if satisfies is None and not error:
+                    error = f"unsupported version constraint: {constraint}"
+                checks.append(
+                    {
+                        "skill": skill_name,
+                        "relation": relation_id,
+                        "kind": "tool-version",
+                        "target": tool["package"],
+                        "ok": bool(satisfies) and not error,
+                        "detail": error or f"installed {version} satisfies {constraint}",
+                    }
+                )
+            for command in relation.get("verify") or []:
+                try:
+                    process = subprocess.run(
+                        command, cwd=str(record.path), text=True, capture_output=True, timeout=120
+                    )
+                    ok = process.returncode == 0
+                    detail = (process.stdout or process.stderr or "").strip()[-4000:]
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    ok, detail = False, str(error)
+                checks.append(
+                    {
+                        "skill": skill_name,
+                        "relation": relation_id,
+                        "kind": "command",
+                        "target": " ".join(command),
+                        "ok": ok,
+                        "detail": detail,
+                    }
+                )
+            if len(checks) == declared:
+                unchecked.append(
+                    {
+                        "skill": skill_name,
+                        "relation": relation_id,
+                        "target": relation.get("skill") or tool.get("package") or tool.get("name"),
+                    }
+                )
+    return {
+        "ok": all(check["ok"] for check in checks),
+        "requestedSkill": name,
+        "affectedSkills": selected,
+        "checks": checks,
+        "uncheckedRelations": unchecked,
+    }
+
+
+def cmd_verify(catalog: Catalog, name: str | None, output_format: str) -> int:
+    report = run_verify(catalog, name)
+    if output_format == "json":
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    else:
+        if not report["checks"] and not report["uncheckedRelations"]:
+            print(f"ok: no verify checks declared for {', '.join(report['affectedSkills'])}")
+        for check in report["checks"]:
+            marker = "ok" if check["ok"] else "FAIL"
+            print(f"{marker}: {check['skill']} [{check['relation']}] {check['target']}: {check['detail']}")
+        for relation in report["uncheckedRelations"]:
+            print(f"unchecked: {relation['skill']} [{relation['relation']}] {relation['target']}: no verify declared")
+    return 0 if report["ok"] else 1
+
+
+# --------------------------------------------------------------------------
+# update: mirror replace and owned source review
+# --------------------------------------------------------------------------
+
+def clone_source(catalog: Catalog, source_id: str, work: Path) -> Path:
+    source = catalog.sources.get(source_id) or {}
+    url = source.get("url")
+    if not url:
+        raise CliError(f"source {source_id!r}: url is missing")
+    repo = work / "repo"
+    run(["git", "clone", "--quiet", "--no-checkout", url, str(repo)])
+    return repo
+
+
+def ensure_commit(repo: Path, commit: str) -> None:
+    if git_object_exists(repo, commit):
+        return
+    run(["git", "fetch", "--quiet", "origin", commit], cwd=repo)
+    if not git_object_exists(repo, commit):
+        raise CliError(f"source commit is unavailable: {commit}")
+
+
+def require_source_path(repo: Path, commit: str, path: str) -> str:
+    if not git_object_exists(repo, commit, path):
+        raise CliError(
+            f"tracked source path moved or disappeared: {commit}:{path}; "
+            "update the manifest mapping after review"
+        )
+    return path
+
+
+def build_source_context(catalog: Catalog, skill: str, relation: dict[str, Any]) -> dict[str, Any]:
+    locator = relation.get("source") or {}
+    work = Path(tempfile.mkdtemp(prefix=f"skill-source-{skill}-"))
+    repo = clone_source(catalog, locator.get("source"), work)
+    target_ref = effective_ref(catalog, locator)
+    target_commit = run(["git", "rev-parse", target_ref], cwd=repo)
+
+    relation_state = (lock_state(catalog, skill).get("relations") or {}).get(relation.get("id")) or {}
+    fingerprint = relation_fingerprint(catalog, relation)
+    scope_changed = bool(relation_state and relation_state.get("relationFingerprint") != fingerprint)
+    base_commit = "" if scope_changed else relation_state.get("lastReviewedCommit") or ""
+    if base_commit:
+        ensure_commit(repo, base_commit)
+
+    source_path = require_source_path(repo, target_commit, str(locator.get("path") or ""))
+    target_dir = work / "target"
+    export_directory(repo, target_commit, source_path, target_dir)
+
+    base_dir: Path | None = None
+    base_path = ""
+    if base_commit:
+        base_path = require_source_path(repo, base_commit, str(locator.get("path") or ""))
+        base_dir = work / "base"
+        export_directory(repo, base_commit, base_path, base_dir)
+
+    all_changes = directory_diff(base_dir, target_dir)
+    relevant = scoped_changes(all_changes, relation.get("watch"))
+    source_advanced = not base_commit or target_commit != base_commit
+    return {
+        "kind": "source-review",
+        "work": work,
+        "relationId": relation.get("id"),
+        "relationType": relation.get("type"),
+        "sourceId": locator.get("source"),
+        "targetRef": target_ref,
+        "baseCommit": base_commit,
+        "targetCommit": target_commit,
+        "targetPath": source_path,
+        "sourceAdvanced": source_advanced,
+        "scopeChanged": scope_changed,
+        "relationFingerprint": fingerprint,
+        "reviewRequired": source_advanced or scope_changed,
+        "relevantChanges": relevant,
+        "allChangeCount": len(all_changes),
+        "action": "selective-adopt" if relation.get("type") == "content-source" else "review",
+    }
+
+
+def build_mirror_context(catalog: Catalog, skill: str) -> dict[str, Any]:
+    record = catalog.skills[skill]
+    locator = record.mirror or {}
+    work = Path(tempfile.mkdtemp(prefix=f"skill-mirror-{skill}-"))
+    repo = clone_source(catalog, locator.get("source"), work)
+    target_ref = effective_ref(catalog, locator)
+    target_commit = run(["git", "rev-parse", target_ref], cwd=repo)
+    source_path = require_source_path(repo, target_commit, str(locator.get("path") or ""))
+    target_dir = work / "target"
+    export_directory(repo, target_commit, source_path, target_dir)
+    skill_md = target_dir / "SKILL.md"
+    if not skill_md.exists() or skill_md.is_symlink() or frontmatter_name(skill_md) != skill:
+        raise CliError(f"mirror source {source_path!r} does not contain SKILL.md with name {skill!r}")
+
+    mirror_state = lock_state(catalog, skill).get("mirror") or {}
+    base_commit = mirror_state.get("resolvedCommit") or ""
+    current_hash = folder_hash(record.path)
+    target_hash = folder_hash(target_dir)
+    recorded_hash = mirror_state.get("treeHash") or ""
+    drift = current_hash != recorded_hash if recorded_hash else current_hash != target_hash
+    return {
+        "kind": "mirror",
+        "work": work,
+        "targetDir": target_dir,
+        "sourceId": locator.get("source"),
+        "targetRef": target_ref,
+        "baseCommit": base_commit,
+        "targetCommit": target_commit,
+        "targetPath": source_path,
+        "currentHash": current_hash,
+        "upstreamHash": target_hash,
+        "drift": drift,
+        "updateAvailable": not base_commit or target_commit != base_commit or target_hash != current_hash,
+        "action": "replace",
+    }
+
+
+def build_report(catalog: Catalog, skill: str, relation_id: str | None):
+    record = catalog.skills[skill]
+    contexts: list[dict[str, Any]] = []
+    if record.ownership == "mirror":
+        if relation_id and relation_id != "mirror":
+            raise CliError(f"mirror skill {skill!r} only has relation id 'mirror'")
+        contexts.append(build_mirror_context(catalog, skill))
+    else:
+        source_relations = record.source_relations
+        if relation_id:
+            source_relations = [r for r in source_relations if r.get("id") == relation_id]
+            if not source_relations:
+                raise CliError(f"skill {skill!r} has no source relation {relation_id!r}")
+        for relation in source_relations:
+            contexts.append(build_source_context(catalog, skill, relation))
+    report = {
+        "skill": skill,
+        "path": record.relative_path,
+        "ownership": record.ownership,
+        "policy": "replace" if record.ownership == "mirror" else "local-authoritative",
+        "sources": [
+            {key: value for key, value in context.items() if key not in {"work", "targetDir"}}
+            for context in contexts
+        ],
+        "dependencies": [
+            {
+                "id": relation.get("id"),
+                "type": relation.get("type"),
+                "target": relation.get("skill") or (relation.get("tool") or {}).get("package")
+                or (relation.get("tool") or {}).get("name"),
+                "action": "update-then-validate",
+            }
+            for relation in record.dependency_relations
+        ],
+    }
+    return report, contexts
+
+
+def path_is_dirty(catalog: Catalog, path: Path) -> tuple[bool, str]:
+    try:
+        relative = path.relative_to(catalog.root).as_posix()
+    except ValueError as error:
+        raise CliError(f"mirror path escapes repository: {path}") from error
+    process = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", relative],
+        cwd=str(catalog.root),
+        text=True,
+        capture_output=True,
+    )
+    if process.returncode != 0:
+        raise CliError(f"cannot inspect mirror worktree state: {(process.stderr or '').strip()}")
+    return bool(process.stdout.strip()), process.stdout.strip()
+
+
+@contextmanager
+def replaced_directory(source: Path, destination: Path):
+    """Swap a directory and roll it back if lock commit/verification fails."""
+    staging_root = Path(
+        tempfile.mkdtemp(prefix=f".{destination.name}.replace-", dir=str(destination.parent))
+    )
+    staged = staging_root / destination.name
+    backup = staging_root / (destination.name + ".backup")
+    shutil.copytree(source, staged, symlinks=True)
+    moved_old = False
+    preserve_staging = False
+    try:
+        if destination.exists() or destination.is_symlink():
+            destination.rename(backup)
+            moved_old = True
+        staged.rename(destination)
+        try:
+            yield
+        except BaseException:
+            try:
+                if destination.is_dir() and not destination.is_symlink():
+                    shutil.rmtree(destination)
+                elif destination.exists() or destination.is_symlink():
+                    destination.unlink()
+                if moved_old and backup.exists():
+                    backup.rename(destination)
+            except BaseException as rollback_error:
+                preserve_staging = True
+                raise CliError(
+                    f"mirror rollback failed; original backup preserved at {backup}: {rollback_error}"
+                ) from rollback_error
+            raise
+        if moved_old:
+            shutil.rmtree(backup, ignore_errors=True)
+    finally:
+        if not preserve_staging:
+            shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def apply_mirror(catalog: Catalog, skill: str, report, contexts) -> dict[str, Any]:
+    record = catalog.skills[skill]
+    if not record.ownership_explicit:
+        raise CliError(f"mirror ownership for {skill!r} must be explicit in {MANIFEST_NAME}")
+    context = contexts[0]
+    needs_replacement = context["currentHash"] != context["upstreamHash"]
+    if needs_replacement:
+        dirty, detail = path_is_dirty(catalog, record.path)
+        if dirty:
+            raise CliError(f"refusing to replace dirty mirror path {record.relative_path}:\n{detail}")
+    lock = deepcopy(catalog.lock)
+    lock.setdefault("skills", {})[skill] = {
+        "mirror": {
+            "resolvedCommit": context["targetCommit"],
+            "sourcePath": context["targetPath"],
+            "treeHash": context["upstreamHash"],
+            "syncedAt": now(),
+        }
+    }
+
+    def verify_and_commit_lock() -> None:
+        if folder_hash(record.path) != context["upstreamHash"]:
+            raise CliError("mirror replacement did not produce the upstream directory hash")
+        write_lock(catalog, lock)
+
+    if needs_replacement:
+        with replaced_directory(context["targetDir"], record.path):
+            verify_and_commit_lock()
+    else:
+        verify_and_commit_lock()
+    report["applied"] = True
+    report["resolvedCommit"] = context["targetCommit"]
+    return report
+
+
+def load_review_payload(path: str) -> dict[str, Any]:
+    try:
+        text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+        value = json.loads(text)
+    except (OSError, json.JSONDecodeError) as error:
+        raise CliError(f"invalid review payload: {error}") from error
+    if not isinstance(value, dict):
+        raise CliError("review payload must be a JSON object")
+    unknown = set(value) - {"toCommit", "accepted", "skipped", "note"}
+    if unknown:
+        raise CliError(f"review payload has unknown fields: {sorted(unknown)}")
+    if not isinstance(value.get("toCommit"), str) or not value.get("toCommit"):
+        raise CliError("review payload requires explicit string field 'toCommit'")
+    for key in ("accepted", "skipped"):
+        if not isinstance(value.get(key), list):
+            raise CliError(f"review payload requires array field {key!r}")
+    if value.get("note") is not None and not isinstance(value.get("note"), str):
+        raise CliError("review payload note must be a string")
+    return value
+
+
+def validate_review_coverage(payload: dict[str, Any], context: dict[str, Any]) -> None:
+    expected = {change["path"] for change in context["relevantChanges"]}
+    decided: dict[str, str] = {}
+    for decision_type in ("accepted", "skipped"):
+        for index, decision in enumerate(payload[decision_type]):
+            label = f"{decision_type}[{index}]"
+            if not isinstance(decision, dict):
+                raise CliError(f"review payload {label} must be an object")
+            allowed = {"upstreamPaths", "localPaths", "note"} if decision_type == "accepted" else {"upstreamPaths", "reason"}
+            unknown = set(decision) - allowed
+            if unknown:
+                raise CliError(f"review payload {label} has unknown fields: {sorted(unknown)}")
+            if not _safe_path_list(decision.get("upstreamPaths")):
+                raise CliError(f"review payload {label} requires unique safe upstreamPaths")
+            if decision_type == "accepted":
+                if not _safe_path_list(decision.get("localPaths")):
+                    raise CliError(f"review payload {label} requires unique safe localPaths")
+                if not isinstance(decision.get("note"), str) or not decision.get("note"):
+                    raise CliError(f"review payload {label} requires a note")
+            elif not isinstance(decision.get("reason"), str) or not decision.get("reason"):
+                raise CliError(f"review payload {label} requires a reason")
+            for upstream_path in decision["upstreamPaths"]:
+                if upstream_path in decided:
+                    raise CliError(
+                        f"review payload decides {upstream_path!r} more than once "
+                        f"({decided[upstream_path]} and {label})"
+                    )
+                decided[upstream_path] = label
+    if set(decided) != expected:
+        missing = sorted(expected - set(decided))
+        extra = sorted(set(decided) - expected)
+        raise CliError(
+            "review receipt must decide every relevant changed path exactly once; "
+            f"missing={missing}, outside-scope={extra}"
+        )
+
+
+def record_review(catalog: Catalog, skill: str, report, contexts, payload_path: str):
+    if len(contexts) != 1:
+        raise CliError("--record-review requires --relation when a skill has multiple source relations")
+    context = contexts[0]
+    payload = load_review_payload(payload_path)
+    validate_review_coverage(payload, context)
+    if payload["toCommit"] != context["targetCommit"]:
+        raise CliError(
+            f"review payload toCommit {payload['toCommit']!r} does not match checked target "
+            f"{context['targetCommit']!r}"
+        )
+    receipt: dict[str, Any] = {
+        "relationFingerprint": context["relationFingerprint"],
+        "sourceId": context["sourceId"],
+        "sourcePath": context["targetPath"],
+        "sourceRef": context["targetRef"],
+        "lastReviewedCommit": context["targetCommit"],
+        "reviewedAt": now(),
+        "accepted": [
+            {"upstreamPaths": list(d["upstreamPaths"]), "localPaths": list(d["localPaths"]), "note": d["note"]}
+            for d in payload["accepted"]
+        ],
+        "skipped": [
+            {"upstreamPaths": list(d["upstreamPaths"]), "reason": d["reason"]}
+            for d in payload["skipped"]
+        ],
+    }
+    if payload.get("note"):
+        receipt["note"] = str(payload["note"])
+    lock = deepcopy(catalog.lock)
+    skill_lock = lock.setdefault("skills", {}).setdefault(skill, {})
+    skill_lock.setdefault("relations", {})[context["relationId"]] = receipt
+    write_lock(catalog, lock)
+    report["reviewRecorded"] = receipt
+    return report
+
+
+def print_update_report(report: dict[str, Any]) -> None:
+    print(f"skill: {report['skill']} ({report['ownership']}, policy {report['policy']})")
+    if not report["sources"]:
+        print("sources: none")
+    for source in report["sources"]:
+        print(f"relation: {source.get('relationId', 'mirror')}")
+        print(f"  action: {source['action']}")
+        print(f"  targetRef: {source['targetRef']} @ {source['targetCommit']}")
+        print(f"  baseCommit: {source.get('baseCommit') or '(none)'}")
+        print(f"  targetPath: {source['targetPath']}")
+        if source["kind"] == "mirror":
+            print(f"  updateAvailable: {'yes' if source['updateAvailable'] else 'no'}")
+            print(f"  mirrorDrift: {'yes' if source['drift'] else 'no'}")
+        else:
+            print(f"  reviewRequired: {'yes' if source['reviewRequired'] else 'no'}")
+            print(f"  scopeChanged: {'yes' if source['scopeChanged'] else 'no'}")
+            print(f"  relevantChanges: {len(source['relevantChanges'])}")
+            for change in source["relevantChanges"][:80]:
+                print(f"    - {change['status']} {change['path']}")
+    for dependency in report["dependencies"]:
+        print(f"dependency: {dependency['type']} {dependency['target']}: update then validate; never merge")
+    if report.get("applied"):
+        print(f"replaced mirror at {report['resolvedCommit']}; updated {LOCK_NAME}")
+    if report.get("reviewRecorded"):
+        print(f"recorded source review through {report['reviewRecorded']['lastReviewedCommit']}")
+
+
+def cmd_update(catalog: Catalog, args: argparse.Namespace) -> int:
+    record = catalog.skills.get(args.skill)
+    if record is None:
+        raise CliError(f"unknown skill: {args.skill}")
+    if args.apply and record.ownership != "mirror":
+        raise CliError(
+            f"owned skill {args.skill!r} is local-authoritative; --apply is forbidden. "
+            "Review source deltas, selectively edit the owned skill, then use --record-review."
+        )
+    if args.record_review and record.ownership != "owned":
+        raise CliError("--record-review is only valid for owned skills")
+    contexts: list[dict[str, Any]] = []
+    try:
+        report, contexts = build_report(catalog, args.skill, args.relation)
+        if args.apply:
+            report = apply_mirror(catalog, args.skill, report, contexts)
+        elif args.record_review:
+            report = record_review(catalog, args.skill, report, contexts, args.record_review)
+        if args.keep_workdir:
+            report["workdirs"] = [str(context["work"]) for context in contexts]
+        if args.format == "json":
+            print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        else:
+            print_update_report(report)
+            if args.keep_workdir:
+                for context in contexts:
+                    print(f"kept workdir: {context['work']}")
+        return 0
+    finally:
+        if not args.keep_workdir:
+            for context in contexts:
+                shutil.rmtree(context.get("work"), ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# doctor
+# --------------------------------------------------------------------------
+
+def remote_heads(catalog: Catalog, needed: dict[str, set[str]]) -> dict[tuple[str, str], str]:
+    """Resolve each (source, ref) pair with one clone per source."""
+    heads: dict[tuple[str, str], str] = {}
+    for source_id, refs in sorted(needed.items()):
+        work = Path(tempfile.mkdtemp(prefix="skills-doctor-"))
+        try:
+            repo = clone_source(catalog, source_id, work)
+            for ref in sorted(refs):
+                heads[(source_id, ref)] = run(["git", "rev-parse", ref], cwd=repo)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+    return heads
+
+
+def cmd_doctor(remote: bool) -> int:
+    warnings: list[str] = []
+    broken: list[str] = []
+    checks: list[str] = []
+
+    try:
+        catalog = load_catalog()
+    except CliError as error:
+        print("# DOCTOR — BROKEN\n")
+        print(str(error))
+        return 1
+
+    mirrors = {name: record for name, record in catalog.skills.items() if record.ownership == "mirror"}
+    owned = {name: record for name, record in catalog.skills.items() if record.ownership != "mirror"}
+    explicit = sum(record.ownership_explicit for record in catalog.skills.values())
+    checks.append(f"model: ok ({len(catalog.skills)} skills, {explicit} explicit)")
+    if explicit != len(catalog.skills):
+        implicit = sorted(n for n, r in catalog.skills.items() if not r.ownership_explicit)
+        warnings.append(f"implicit ownership (defaults to owned): {', '.join(implicit)}")
+
+    link_errors = check_links(catalog)
+    if link_errors:
+        broken.extend(link_errors)
+        checks.append(f"runtime links: FAIL ({len(link_errors)} problems)")
+    else:
+        checks.append(f"runtime links: ok ({len(catalog.skills)} skills x {len(target_roots())} roots)")
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=str(catalog.root), text=True, capture_output=True
+    )
+    dirty_paths = [line for line in status.stdout.splitlines() if line.strip()]
+    checks.append("worktree: clean" if not dirty_paths else f"worktree: {len(dirty_paths)} uncommitted paths")
+    if dirty_paths:
+        warnings.append(f"uncommitted working-tree changes ({len(dirty_paths)} paths)")
+
+    # Mirror integrity (local): recorded sync state and byte-exact hash.
+    mirror_status: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+    for name, record in sorted(mirrors.items()):
+        source_id = (record.mirror or {}).get("source")
+        state = lock_state(catalog, name).get("mirror") or {}
+        if not state:
+            mirror_status[source_id]["nobaseline"].append(name)
+        elif folder_hash(record.path) != state.get("treeHash"):
+            mirror_status[source_id]["drift"].append(name)
+        else:
+            mirror_status[source_id]["intact"].append(name)
+    drifted = [name for group in mirror_status.values() for name in group.get("drift", [])]
+    nobaseline = [name for group in mirror_status.values() for name in group.get("nobaseline", [])]
+    if drifted:
+        broken.append(f"mirror drift (local content != recorded upstream tree): {', '.join(sorted(drifted))}")
+        checks.append(f"mirror integrity: FAIL ({len(drifted)} drifted)")
+    else:
+        checks.append(f"mirror integrity: ok ({len(mirrors)} mirrors)")
+    if nobaseline:
+        warnings.append(f"mirrors without recorded sync state: {', '.join(sorted(nobaseline))}")
+
+    # Owned source review state.
+    owned_status: dict[str, list[str]] = {}
+    review_debt: list[str] = []
+    for name, record in sorted(owned.items()):
+        notes = []
+        states = lock_state(catalog, name).get("relations") or {}
+        for relation in record.source_relations:
+            relation_id = relation.get("id")
+            state = states.get(relation_id)
+            if not state:
+                notes.append(f"{relation_id}: no review baseline")
+            elif state.get("relationFingerprint") != relation_fingerprint(catalog, relation):
+                notes.append(f"{relation_id}: watch scope changed since last review")
+        owned_status[name] = notes
+        review_debt.extend(f"{name} {note}" for note in notes)
+    checks.append(
+        "owned review state: ok" if not review_debt else f"owned review state: {len(review_debt)} pending"
+    )
+    warnings.extend(review_debt)
+
+    verify_report = run_verify(catalog, None)
+    failed = [check for check in verify_report["checks"] if not check["ok"]]
+    if failed:
+        broken.extend(
+            f"verify failed: {check['skill']} [{check['relation']}] {check['target']}: {check['detail']}"
+            for check in failed
+        )
+    checks.append(
+        f"dependency verify: {'ok' if not failed else 'FAIL'} "
+        f"({len(verify_report['checks'])} checks, {len(failed)} failed, "
+        f"{len(verify_report['uncheckedRelations'])} unchecked)"
+    )
+    for relation in verify_report["uncheckedRelations"]:
+        warnings.append(f"no verify declared: {relation['skill']} [{relation['relation']}] {relation['target']}")
+
+    # Upstream freshness (optional, one clone per source).
+    freshness: dict[str, str] = {}
+    if remote:
+        needed: dict[str, set[str]] = defaultdict(set)
+        for record in mirrors.values():
+            locator = record.mirror or {}
+            needed[locator.get("source")].add(effective_ref(catalog, locator))
+        for record in owned.values():
+            for relation in record.source_relations:
+                locator = relation.get("source") or {}
+                needed[locator.get("source")].add(effective_ref(catalog, locator))
+        heads = remote_heads(catalog, needed)
+        for name, record in sorted(mirrors.items()):
+            locator = record.mirror or {}
+            head = heads.get((locator.get("source"), effective_ref(catalog, locator)))
+            state = lock_state(catalog, name).get("mirror") or {}
+            if head and state.get("resolvedCommit") and head != state["resolvedCommit"]:
+                freshness[name] = "update available"
+        for name, record in sorted(owned.items()):
+            states = lock_state(catalog, name).get("relations") or {}
+            for relation in record.source_relations:
+                locator = relation.get("source") or {}
+                head = heads.get((locator.get("source"), effective_ref(catalog, locator)))
+                state = states.get(relation.get("id")) or {}
+                if head and state.get("lastReviewedCommit") and head != state["lastReviewedCommit"]:
+                    freshness[f"{name}:{relation.get('id')}"] = "source advanced since last review"
+        if freshness:
+            warnings.extend(f"{target}: {status}" for target, status in sorted(freshness.items()))
+        checks.append(f"upstream freshness: {len(freshness)} behind ({len(heads)} refs checked)")
+
+    verdict = "BROKEN" if broken else ("WARN" if warnings else "HEALTHY")
+    print(f"# DOCTOR — {verdict}\n")
+    print(f"**{len(catalog.skills)} skills · {len(mirrors)} mirror · {len(owned)} owned · {explicit}/{len(catalog.skills)} explicit**\n")
+
+    print("## Mirror\n")
+    print("| Source | Skills | Status |")
+    print("|---|---:|---|")
+    for source_id in sorted(mirror_status):
+        group = mirror_status[source_id]
+        count = sum(len(names) for names in group.values())
+        notes = []
+        if group.get("drift"):
+            notes.append(f"❌ Drift: {', '.join(sorted(group['drift']))}")
+        if group.get("nobaseline"):
+            notes.append(f"⚠️ No baseline: {', '.join(sorted(group['nobaseline']))}")
+        if remote:
+            behind = sorted(n for n in group.get("intact", []) if n in freshness)
+            if behind:
+                notes.append(f"⚠️ Update available: {', '.join(behind)}")
+        print(f"| {source_id} | {count} | {'; '.join(notes) if notes else '✅ Current'} |")
+
+    print("\n## Owned\n")
+    print("| Skill | Sources | Status |")
+    print("|---|---:|---|")
+    for name, record in sorted(owned.items()):
+        notes = list(owned_status.get(name) or [])
+        if remote:
+            notes.extend(
+                "source advanced since last review"
+                for key in freshness
+                if key.startswith(f"{name}:")
+            )
+        status_text = "; ".join(f"⚠️ {note}" for note in notes) if notes else (
+            "✅ Reviewed" if record.source_relations else "✅ Local-authoritative"
+        )
+        print(f"| {name} | {len(record.source_relations)} | {status_text} |")
+
+    print("\n## Health checks\n")
+    for line in checks:
+        print(f"- {line}")
+
+    print("\n## Warnings\n")
+    if broken or warnings:
+        for index, item in enumerate([*broken, *warnings], 1):
+            print(f"{index}. {'BROKEN: ' if index <= len(broken) else ''}{item}")
+    else:
+        print("None")
+    print("\nDoctor made no updates or repairs.")
+    return 1 if broken else 0
+
+
+# --------------------------------------------------------------------------
+# list
+# --------------------------------------------------------------------------
+
+def cmd_list(catalog: Catalog, output_format: str) -> int:
+    dependencies, reverse = dependency_graph(catalog)
+    rows = []
+    for name, record in sorted(catalog.skills.items()):
+        source = (record.mirror or {}).get("source") if record.ownership == "mirror" else None
+        rows.append(
+            {
+                "name": name,
+                "path": record.relative_path,
+                "ownership": record.ownership,
+                "source": source,
+                "sourceRelations": [r.get("id") for r in record.source_relations],
+                "dependsOn": sorted(dependencies.get(name, [])),
+                "usedBy": sorted(reverse.get(name, [])),
+            }
+        )
+    if output_format == "json":
+        print(json.dumps({"skills": rows}, ensure_ascii=False, sort_keys=True))
+        return 0
+    for row in rows:
+        origin = row["source"] or (", ".join(row["sourceRelations"]) or "local")
+        extras = []
+        if row["dependsOn"]:
+            extras.append("depends: " + ", ".join(row["dependsOn"]))
+        if row["usedBy"]:
+            extras.append("used by: " + ", ".join(row["usedBy"]))
+        print(f"{row['name']:32} {row['ownership']:7} {origin}" + (f"  [{'; '.join(extras)}]" if extras else ""))
+    return 0
+
+
+# --------------------------------------------------------------------------
+# entry point
+# --------------------------------------------------------------------------
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="skills", description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    commands.add_parser("apply", help="link every skill into the runtime skill directories")
+
+    doctor = commands.add_parser("doctor", help="read-only health report")
+    doctor.add_argument("--remote", action="store_true", help="also check upstream freshness (clones each source once)")
+
+    update = commands.add_parser("update", help="check/apply a mirror update or record an owned source review")
+    update.add_argument("skill")
+    mode = update.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="replace an explicit, clean mirror")
+    mode.add_argument("--record-review", metavar="JSON", help="record an owned source review from a JSON file or '-'")
+    update.add_argument("--relation", help="source relation id (required with multiple source relations)")
+    update.add_argument("--keep-workdir", action="store_true", help="keep temporary source checkouts for content review")
+    update.add_argument("--format", choices=["text", "json"], default="text")
+
+    verify = commands.add_parser("verify", help="run declared dependency verify commands")
+    verify.add_argument("skill", nargs="?")
+    verify.add_argument("--format", choices=["text", "json"], default="text")
+
+    lister = commands.add_parser("list", help="one entry per skill")
+    lister.add_argument("--format", choices=["text", "json"], default="text")
+
+    return parser.parse_args(argv[1:])
+
+
+def main(argv: list[str]) -> int:
+    args = parse_args(argv)
+    as_json = getattr(args, "format", "text") == "json"
+    try:
+        if args.command == "doctor":
+            return cmd_doctor(args.remote)
+        catalog = load_catalog()
+        if args.command == "apply":
+            return apply_links(catalog)
+        if args.command == "update":
+            return cmd_update(catalog, args)
+        if args.command == "verify":
+            return cmd_verify(catalog, args.skill, args.format)
+        return cmd_list(catalog, args.format)
+    except CliError as error:
+        if as_json:
+            print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        else:
+            print(f"error: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

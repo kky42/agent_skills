@@ -1,5 +1,4 @@
 {
-  "$schema": "./schemas/skill-manifest.schema.json",
   "schemaVersion": 1,
   "sources": {
     "mattpocock/skills": {
@@ -56,7 +55,10 @@
           "type": "skill-dependency",
           "skill": "playwright-cli",
           "verify": [
-            ["playwright-cli", "--help"]
+            [
+              "playwright-cli",
+              "--help"
+            ]
           ]
         },
         {
@@ -69,8 +71,14 @@
           },
           "updatePolicy": "compatible",
           "verify": [
-            ["playwright-cli", "--version"],
-            ["playwright-cli", "--help"]
+            [
+              "playwright-cli",
+              "--version"
+            ],
+            [
+              "playwright-cli",
+              "--help"
+            ]
           ]
         },
         {
@@ -83,8 +91,16 @@
           },
           "updatePolicy": "manual",
           "verify": [
-            ["python3", "scripts/chatgpt-pw-lock", "--help"],
-            ["node", "--check", "scripts/deep-research-extract-current.js"]
+            [
+              "python3",
+              "scripts/chatgpt-pw-lock",
+              "--help"
+            ],
+            [
+              "node",
+              "--check",
+              "scripts/deep-research-extract-current.js"
+            ]
           ]
         }
       ]
@@ -173,8 +189,14 @@
             "path": "skills/nvidia-kaggle-skill"
           },
           "watch": {
-            "include": ["**"],
-            "localPaths": ["SKILL.md", "refs/**", "scripts/nvidia/**"],
+            "include": [
+              "**"
+            ],
+            "localPaths": [
+              "SKILL.md",
+              "refs/**",
+              "scripts/nvidia/**"
+            ],
             "localConcerns": [
               {
                 "id": "nvidia-methodology-and-helpers",
@@ -191,8 +213,16 @@
             "path": "src/kaggle"
           },
           "watch": {
-            "include": ["cli.py", "api/**"],
-            "localPaths": ["SKILL.md", "refs/cli/**", "refs/scripts/**", "scripts/**"],
+            "include": [
+              "cli.py",
+              "api/**"
+            ],
+            "localPaths": [
+              "SKILL.md",
+              "refs/cli/**",
+              "refs/scripts/**",
+              "scripts/**"
+            ],
             "localConcerns": [
               {
                 "id": "kaggle-cli-compatibility",
@@ -206,7 +236,10 @@
           "type": "skill-dependency",
           "skill": "playwright-cli",
           "verify": [
-            ["playwright-cli", "--help"]
+            [
+              "playwright-cli",
+              "--help"
+            ]
           ]
         },
         {
@@ -218,8 +251,15 @@
           },
           "updatePolicy": "compatible",
           "verify": [
-            ["kaggle", "--version"],
-            ["kaggle", "competitions", "--help"]
+            [
+              "kaggle",
+              "--version"
+            ],
+            [
+              "kaggle",
+              "competitions",
+              "--help"
+            ]
           ]
         }
       ]

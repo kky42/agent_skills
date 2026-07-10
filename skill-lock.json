@@ -1,13 +1,11 @@
 {
-  "$schema": "./schemas/skill-lock.schema.json",
   "schemaVersion": 1,
   "skills": {
     "code-review": {
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/code-review",
-        "upstreamHash": "sha256:2addb0a019999ad6132405c1117d423bfc6dc750d37c4534f18b12733708aaba",
-        "materializedHash": "sha256:2addb0a019999ad6132405c1117d423bfc6dc750d37c4534f18b12733708aaba",
+        "treeHash": "sha256:2addb0a019999ad6132405c1117d423bfc6dc750d37c4534f18b12733708aaba",
         "syncedAt": "2026-07-10T09:09:35.104528Z"
       }
     },
@@ -15,8 +13,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/codebase-design",
-        "upstreamHash": "sha256:d95a9f05f2b1b6bd5dbb4d19d7d49f1c98b182899c9b4821aa93ac4ba942019c",
-        "materializedHash": "sha256:d95a9f05f2b1b6bd5dbb4d19d7d49f1c98b182899c9b4821aa93ac4ba942019c",
+        "treeHash": "sha256:d95a9f05f2b1b6bd5dbb4d19d7d49f1c98b182899c9b4821aa93ac4ba942019c",
         "syncedAt": "2026-07-10T09:09:38.097241Z"
       }
     },
@@ -24,8 +21,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/diagnosing-bugs",
-        "upstreamHash": "sha256:f655453fcaf4f5dad59c443b1a29a7de79eed0bbb40b870f812061ceb8311450",
-        "materializedHash": "sha256:f655453fcaf4f5dad59c443b1a29a7de79eed0bbb40b870f812061ceb8311450",
+        "treeHash": "sha256:f655453fcaf4f5dad59c443b1a29a7de79eed0bbb40b870f812061ceb8311450",
         "syncedAt": "2026-07-10T09:09:41.434175Z"
       }
     },
@@ -33,8 +29,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/domain-modeling",
-        "upstreamHash": "sha256:c28352e2014bd9803d14f86fa8811de92adb2e584ecbfb55f585410471f21d50",
-        "materializedHash": "sha256:c28352e2014bd9803d14f86fa8811de92adb2e584ecbfb55f585410471f21d50",
+        "treeHash": "sha256:c28352e2014bd9803d14f86fa8811de92adb2e584ecbfb55f585410471f21d50",
         "syncedAt": "2026-07-10T09:09:44.634575Z"
       }
     },
@@ -42,8 +37,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/grill-with-docs",
-        "upstreamHash": "sha256:52f53032f124350a217aba32437f07986bda74a898424a04b6ad6dd7368d6ce6",
-        "materializedHash": "sha256:52f53032f124350a217aba32437f07986bda74a898424a04b6ad6dd7368d6ce6",
+        "treeHash": "sha256:52f53032f124350a217aba32437f07986bda74a898424a04b6ad6dd7368d6ce6",
         "syncedAt": "2026-07-10T09:09:47.588926Z"
       }
     },
@@ -51,8 +45,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/productivity/grilling",
-        "upstreamHash": "sha256:ef84d3365ae61793e821de01bf283525082d0b36f49f523dfeb2de2539a54938",
-        "materializedHash": "sha256:ef84d3365ae61793e821de01bf283525082d0b36f49f523dfeb2de2539a54938",
+        "treeHash": "sha256:ef84d3365ae61793e821de01bf283525082d0b36f49f523dfeb2de2539a54938",
         "syncedAt": "2026-07-10T09:09:50.581725Z"
       }
     },
@@ -60,8 +53,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/productivity/handoff",
-        "upstreamHash": "sha256:4f3f56bb978b5b1b14a8a9860514780ed5688d59a97fa1ed811b243dcd70f35b",
-        "materializedHash": "sha256:4f3f56bb978b5b1b14a8a9860514780ed5688d59a97fa1ed811b243dcd70f35b",
+        "treeHash": "sha256:4f3f56bb978b5b1b14a8a9860514780ed5688d59a97fa1ed811b243dcd70f35b",
         "syncedAt": "2026-07-10T09:09:53.577467Z"
       }
     },
@@ -69,8 +61,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/implement",
-        "upstreamHash": "sha256:af371ae8cccbd6470e6b375e99ed801640accc999f3464cf075136ec99355b51",
-        "materializedHash": "sha256:af371ae8cccbd6470e6b375e99ed801640accc999f3464cf075136ec99355b51",
+        "treeHash": "sha256:af371ae8cccbd6470e6b375e99ed801640accc999f3464cf075136ec99355b51",
         "syncedAt": "2026-07-10T09:09:56.485970Z"
       }
     },
@@ -78,8 +69,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/improve-codebase-architecture",
-        "upstreamHash": "sha256:28ba421186819526ee9ae3ec72871d5b8ca0cadc60ded27a963287e750d0d08f",
-        "materializedHash": "sha256:28ba421186819526ee9ae3ec72871d5b8ca0cadc60ded27a963287e750d0d08f",
+        "treeHash": "sha256:28ba421186819526ee9ae3ec72871d5b8ca0cadc60ded27a963287e750d0d08f",
         "syncedAt": "2026-07-10T09:10:00.092004Z"
       }
     },
@@ -87,8 +77,7 @@
       "mirror": {
         "resolvedCommit": "6129bb3953d5eebd8dd67f96802b320c723f50ca",
         "sourcePath": "skills/opencli-adapter-author",
-        "upstreamHash": "sha256:7c8cdc81a2ef4cb26ef16104dba3c755663eb063ef47802ec076126d736ec59b",
-        "materializedHash": "sha256:7c8cdc81a2ef4cb26ef16104dba3c755663eb063ef47802ec076126d736ec59b",
+        "treeHash": "sha256:7c8cdc81a2ef4cb26ef16104dba3c755663eb063ef47802ec076126d736ec59b",
         "syncedAt": "2026-07-10T09:10:05.310199Z"
       }
     },
@@ -96,8 +85,7 @@
       "mirror": {
         "resolvedCommit": "6129bb3953d5eebd8dd67f96802b320c723f50ca",
         "sourcePath": "skills/opencli-autofix",
-        "upstreamHash": "sha256:5efd45f0f96af58a974d6405bd3c275370d53d715fc5bca82317e206de4f55af",
-        "materializedHash": "sha256:5efd45f0f96af58a974d6405bd3c275370d53d715fc5bca82317e206de4f55af",
+        "treeHash": "sha256:5efd45f0f96af58a974d6405bd3c275370d53d715fc5bca82317e206de4f55af",
         "syncedAt": "2026-07-10T09:10:09.709497Z"
       }
     },
@@ -105,8 +93,7 @@
       "mirror": {
         "resolvedCommit": "730ffecd7278b07b27b2da0c91c9920391be60f3",
         "sourcePath": "skills/pievo",
-        "upstreamHash": "sha256:d730bb49901ed46644a138b283a17a8d637eabbe071d6cd933e465180cfe08fb",
-        "materializedHash": "sha256:d730bb49901ed46644a138b283a17a8d637eabbe071d6cd933e465180cfe08fb",
+        "treeHash": "sha256:d730bb49901ed46644a138b283a17a8d637eabbe071d6cd933e465180cfe08fb",
         "syncedAt": "2026-07-10T09:10:12.957331Z"
       }
     },
@@ -114,8 +101,7 @@
       "mirror": {
         "resolvedCommit": "793cfb32572733cbcb401e6f28d05a7a914ce408",
         "sourcePath": "skills/playwright-cli",
-        "upstreamHash": "sha256:e173e2c2dec5274a6313adc6a85a783c068433eb575830d1abc49615a19e4be7",
-        "materializedHash": "sha256:e173e2c2dec5274a6313adc6a85a783c068433eb575830d1abc49615a19e4be7",
+        "treeHash": "sha256:e173e2c2dec5274a6313adc6a85a783c068433eb575830d1abc49615a19e4be7",
         "syncedAt": "2026-07-10T09:10:16.104220Z"
       }
     },
@@ -123,8 +109,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/prototype",
-        "upstreamHash": "sha256:b119b488369bd316fe8270157b2fab50bdb25fc9c0300723abfcc63fd3523720",
-        "materializedHash": "sha256:b119b488369bd316fe8270157b2fab50bdb25fc9c0300723abfcc63fd3523720",
+        "treeHash": "sha256:b119b488369bd316fe8270157b2fab50bdb25fc9c0300723abfcc63fd3523720",
         "syncedAt": "2026-07-10T09:10:19.092366Z"
       }
     },
@@ -132,8 +117,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/research",
-        "upstreamHash": "sha256:dfa0db0b34b0d10bfa7ae8911faeeb9b73741686079c2567248cc17234dc3c0c",
-        "materializedHash": "sha256:dfa0db0b34b0d10bfa7ae8911faeeb9b73741686079c2567248cc17234dc3c0c",
+        "treeHash": "sha256:dfa0db0b34b0d10bfa7ae8911faeeb9b73741686079c2567248cc17234dc3c0c",
         "syncedAt": "2026-07-10T09:10:21.943395Z"
       }
     },
@@ -141,8 +125,7 @@
       "mirror": {
         "resolvedCommit": "003f15ddcdad6da91c62a75f36097101e6afbbdb",
         "sourcePath": "skills/researcher",
-        "upstreamHash": "sha256:4d4e081aa710d58efcbc5a44443bcab18e837ad7c3865a29af447460a5fee7e9",
-        "materializedHash": "sha256:4d4e081aa710d58efcbc5a44443bcab18e837ad7c3865a29af447460a5fee7e9",
+        "treeHash": "sha256:4d4e081aa710d58efcbc5a44443bcab18e837ad7c3865a29af447460a5fee7e9",
         "syncedAt": "2026-07-10T09:10:24.408171Z"
       }
     },
@@ -150,8 +133,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/resolving-merge-conflicts",
-        "upstreamHash": "sha256:89cc9ebe8a3ed2fe8913358265dc3bd2a45a9014177f2844c38c4e5a923d3220",
-        "materializedHash": "sha256:89cc9ebe8a3ed2fe8913358265dc3bd2a45a9014177f2844c38c4e5a923d3220",
+        "treeHash": "sha256:89cc9ebe8a3ed2fe8913358265dc3bd2a45a9014177f2844c38c4e5a923d3220",
         "syncedAt": "2026-07-10T09:10:27.208662Z"
       }
     },
@@ -159,8 +141,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/tdd",
-        "upstreamHash": "sha256:600104aed47222022cf591eaf5e1a45aa4f1dd04b0a259d972eaa65ab5d757b2",
-        "materializedHash": "sha256:600104aed47222022cf591eaf5e1a45aa4f1dd04b0a259d972eaa65ab5d757b2",
+        "treeHash": "sha256:600104aed47222022cf591eaf5e1a45aa4f1dd04b0a259d972eaa65ab5d757b2",
         "syncedAt": "2026-07-10T09:10:33.454055Z"
       }
     },
@@ -168,8 +149,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/productivity/teach",
-        "upstreamHash": "sha256:2f43ded1237132e7d616f2478b6c3754861c75ad82e93757d2434dbff02ec38f",
-        "materializedHash": "sha256:2f43ded1237132e7d616f2478b6c3754861c75ad82e93757d2434dbff02ec38f",
+        "treeHash": "sha256:2f43ded1237132e7d616f2478b6c3754861c75ad82e93757d2434dbff02ec38f",
         "syncedAt": "2026-07-10T09:10:36.309218Z"
       }
     },
@@ -177,8 +157,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/to-spec",
-        "upstreamHash": "sha256:53efe991456e92890df10c7f1ec2b693f44ef6c39cd5424f1fafb527dab613bb",
-        "materializedHash": "sha256:53efe991456e92890df10c7f1ec2b693f44ef6c39cd5424f1fafb527dab613bb",
+        "treeHash": "sha256:53efe991456e92890df10c7f1ec2b693f44ef6c39cd5424f1fafb527dab613bb",
         "syncedAt": "2026-07-10T09:10:39.169867Z"
       }
     },
@@ -186,8 +165,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/triage",
-        "upstreamHash": "sha256:4aa1dc4cb15516c483e36b2bcccec55a67b6ab4bc7f55f5c5978b6b03d5154be",
-        "materializedHash": "sha256:4aa1dc4cb15516c483e36b2bcccec55a67b6ab4bc7f55f5c5978b6b03d5154be",
+        "treeHash": "sha256:4aa1dc4cb15516c483e36b2bcccec55a67b6ab4bc7f55f5c5978b6b03d5154be",
         "syncedAt": "2026-07-10T09:10:45.340227Z"
       }
     },
@@ -195,8 +173,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/wayfinder",
-        "upstreamHash": "sha256:d2fb264348e8139f68485795c0c19f27bc1b91e462132cd3318750afe052acf3",
-        "materializedHash": "sha256:d2fb264348e8139f68485795c0c19f27bc1b91e462132cd3318750afe052acf3",
+        "treeHash": "sha256:d2fb264348e8139f68485795c0c19f27bc1b91e462132cd3318750afe052acf3",
         "syncedAt": "2026-07-10T09:10:48.643021Z"
       }
     },
@@ -204,8 +181,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/productivity/writing-great-skills",
-        "upstreamHash": "sha256:5f1c5d730b068f3bad28ba95838e52ffea7a6ddfe3f669c3c90097551c28532e",
-        "materializedHash": "sha256:5f1c5d730b068f3bad28ba95838e52ffea7a6ddfe3f669c3c90097551c28532e",
+        "treeHash": "sha256:5f1c5d730b068f3bad28ba95838e52ffea7a6ddfe3f669c3c90097551c28532e",
         "syncedAt": "2026-07-10T09:10:51.765273Z"
       }
     },
@@ -213,8 +189,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/ask-matt",
-        "upstreamHash": "sha256:b582984c0fb152add71d28cdde12c40b713b8d490a9979f22e494680b93f5b9b",
-        "materializedHash": "sha256:b582984c0fb152add71d28cdde12c40b713b8d490a9979f22e494680b93f5b9b",
+        "treeHash": "sha256:b582984c0fb152add71d28cdde12c40b713b8d490a9979f22e494680b93f5b9b",
         "syncedAt": "2026-07-10T09:11:30.964071Z"
       }
     },
@@ -222,8 +197,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/setup-matt-pocock-skills",
-        "upstreamHash": "sha256:037a21a93b8cf23ee88256044c9ca8a412b841e929b1e0c2607bb8741c044f42",
-        "materializedHash": "sha256:037a21a93b8cf23ee88256044c9ca8a412b841e929b1e0c2607bb8741c044f42",
+        "treeHash": "sha256:037a21a93b8cf23ee88256044c9ca8a412b841e929b1e0c2607bb8741c044f42",
         "syncedAt": "2026-07-10T09:11:37.349289Z"
       }
     },
@@ -231,8 +205,7 @@
       "mirror": {
         "resolvedCommit": "89d370d181e7397c1cf4e9da47391dd26cd416b1",
         "sourcePath": "skills/engineering/to-tickets",
-        "upstreamHash": "sha256:606a1aef0e7b512936da5cbb7432a645a6ef785efad1b455c8655f0f021f7468",
-        "materializedHash": "sha256:606a1aef0e7b512936da5cbb7432a645a6ef785efad1b455c8655f0f021f7468",
+        "treeHash": "sha256:606a1aef0e7b512936da5cbb7432a645a6ef785efad1b455c8655f0f021f7468",
         "syncedAt": "2026-07-10T09:11:43.460729Z"
       }
     },
@@ -240,8 +213,7 @@
       "mirror": {
         "resolvedCommit": "6129bb3953d5eebd8dd67f96802b320c723f50ca",
         "sourcePath": "skills/opencli-usage",
-        "upstreamHash": "sha256:9a13db1660c92c118784924f8caf38f61b96397057abf71bfbd7356a52e0329d",
-        "materializedHash": "sha256:9a13db1660c92c118784924f8caf38f61b96397057abf71bfbd7356a52e0329d",
+        "treeHash": "sha256:9a13db1660c92c118784924f8caf38f61b96397057abf71bfbd7356a52e0329d",
         "syncedAt": "2026-07-10T09:49:37.309529Z"
       }
     },
@@ -249,171 +221,33 @@
       "mirror": {
         "resolvedCommit": "6129bb3953d5eebd8dd67f96802b320c723f50ca",
         "sourcePath": "skills/smart-search",
-        "upstreamHash": "sha256:0dba6ceeabec2cb3073bb75b7debe59c2aabed2f00b558bc3712364efb6aa819",
-        "materializedHash": "sha256:0dba6ceeabec2cb3073bb75b7debe59c2aabed2f00b558bc3712364efb6aa819",
+        "treeHash": "sha256:0dba6ceeabec2cb3073bb75b7debe59c2aabed2f00b558bc3712364efb6aa819",
         "syncedAt": "2026-07-10T09:49:37.723111Z"
       }
     },
     "kaggle": {
       "relations": {
         "nvidia-kaggle": {
-          "reviews": [
-            {
-              "fromCommit": null,
-              "toCommit": "9a9333817802fef8a81c3e999bef219edf05e789",
-              "relationFingerprint": "sha256:cbd90e451abbfb73e62596e59bd06458e833cf7758b765d9a38742e7e3f931c0",
-              "accepted": [
-                {
-                  "upstreamPaths": [
-                    "SKILL.md",
-                    "kernel-setup.md",
-                    "kernels.md",
-                    "research-brief.md",
-                    "submission.md",
-                    "writeups.md"
-                  ],
-                  "localPaths": [
-                    "SKILL.md",
-                    "refs/general",
-                    "refs/scripts/nvidia.md",
-                    "refs/nvidia-kaggle.md"
-                  ],
-                  "note": "Established the owned skill lineage from the initial 5d9f7de vendoring baseline while preserving this skill's private-LB, safety, and reusable-methodology boundaries."
-                },
-                {
-                  "upstreamPaths": [
-                    "scripts/constants.py",
-                    "scripts/db_info.py",
-                    "scripts/discussion_db_info.py",
-                    "scripts/discussion_ingest.py",
-                    "scripts/discussion_query.py",
-                    "scripts/discussion_read.py",
-                    "scripts/discussions/__init__.py",
-                    "scripts/discussions/database.py",
-                    "scripts/discussions/discussion_client.py",
-                    "scripts/discussions/models.py",
-                    "scripts/discussions/paths.py",
-                    "scripts/fetch_competition_info.py",
-                    "scripts/fetch_dataset_info.py",
-                    "scripts/fetch_kernel_score.py",
-                    "scripts/fetch_leaderboard_writeups.py",
-                    "scripts/fetch_top_kernel_scores.py",
-                    "scripts/fetch_writeup.py",
-                    "scripts/kernel_archive.py",
-                    "scripts/kernel_db_info.py",
-                    "scripts/kernel_ingest.py",
-                    "scripts/kernel_query.py",
-                    "scripts/kernel_read.py",
-                    "scripts/kernels/__init__.py",
-                    "scripts/kernels/archive.py",
-                    "scripts/kernels/database.py",
-                    "scripts/kernels/kaggle_client.py",
-                    "scripts/kernels/kaggle_search.py",
-                    "scripts/kernels/models.py",
-                    "scripts/kernels/notebook_reader.py",
-                    "scripts/kernels/paths.py",
-                    "scripts/runtime.py",
-                    "scripts/submission_quota.py",
-                    "scripts/submit_kernel.py",
-                    "scripts/upload_dataset.py"
-                  ],
-                  "localPaths": [
-                    "scripts/nvidia",
-                    "refs/scripts/nvidia.md",
-                    "refs/nvidia-kaggle.md"
-                  ],
-                  "note": "Reviewed namespaced helper lineage through 9a933381. Selectively retained local adaptations, accepted Python 3.9 UTC compatibility and the submit/evaluation nonzero-exit fix, and did not copy SPDX-only churn or remove required local import-path adaptations."
-                }
-              ],
-              "skipped": [
-                {
-                  "upstreamPaths": [
-                    "evals/evals.json"
-                  ],
-                  "reason": "Upstream fixed eval tasks include repository-specific and externally mutating scenarios; this repo validates skill behavior through fresh agents instead of vendoring that suite."
-                }
-              ],
-              "reviewedAt": "2026-07-10T14:11:16.899615Z",
-              "note": "Initial v2 NVIDIA Kaggle content-source review. Fresh agents reproduced the submission failure bug before the update and verified the corrected local helper through controlled non-live boundaries."
-            },
-            {
-              "fromCommit": "9a9333817802fef8a81c3e999bef219edf05e789",
-              "toCommit": "9a9333817802fef8a81c3e999bef219edf05e789",
-              "relationFingerprint": "sha256:cbd90e451abbfb73e62596e59bd06458e833cf7758b765d9a38742e7e3f931c0",
-              "accepted": [],
-              "skipped": [],
-              "reviewedAt": "2026-07-10T14:43:44.475714Z",
-              "note": "Post-update verification receipt: fresh agents re-ran the accepted helper workflows and safety boundaries; the source commit is unchanged and has no additional scoped delta."
-            }
-          ],
           "relationFingerprint": "sha256:cbd90e451abbfb73e62596e59bd06458e833cf7758b765d9a38742e7e3f931c0",
           "sourceId": "NVIDIA/nvidia-kaggle",
           "sourcePath": "skills/nvidia-kaggle-skill",
           "sourceRef": "origin/HEAD",
           "lastReviewedCommit": "9a9333817802fef8a81c3e999bef219edf05e789",
-          "reviewedAt": "2026-07-10T14:43:44.475714Z"
+          "reviewedAt": "2026-07-10T14:43:44.475714Z",
+          "accepted": [],
+          "skipped": [],
+          "note": "Post-update verification receipt: fresh agents re-ran the accepted helper workflows and safety boundaries; the source commit is unchanged and has no additional scoped delta."
         },
         "kaggle-cli-contract": {
-          "reviews": [
-            {
-              "fromCommit": null,
-              "toCommit": "cadeb92943cd63a0eeb730672b440a0b9b02af30",
-              "relationFingerprint": "sha256:c56f58777d5bdb83102ab78947e5c75f486bb868743c6a4f68b4c697fbc30b08",
-              "accepted": [
-                {
-                  "upstreamPaths": [
-                    "api/kaggle_api_extended.py",
-                    "cli.py"
-                  ],
-                  "localPaths": [
-                    "SKILL.md",
-                    "refs/cli/auth.md",
-                    "refs/cli/discussions.md",
-                    "refs/cli/notebooks.md",
-                    "refs/scripts/cache.md",
-                    "refs/scripts/comp_page.md",
-                    "refs/scripts/disc_get.md",
-                    "refs/scripts/nb_list.md",
-                    "refs/scripts/nvidia.md",
-                    "scripts/cache.py",
-                    "scripts/comp_page.py",
-                    "scripts/disc_get.py",
-                    "scripts/nb_list.py",
-                    "scripts/nvidia/submission_quota.py",
-                    "scripts/nvidia/submit_kernel.py",
-                    "scripts/nvidia/upload_dataset.py"
-                  ],
-                  "note": "Verified current CLI/auth/page/topic/kernel-output and API failure contracts with fresh agents, then corrected only the existing Kaggle operations already inside this owned skill's scope."
-                }
-              ],
-              "skipped": [
-                {
-                  "upstreamPaths": [
-                    "api/__init__.py",
-                    "api/kaggle_api.py"
-                  ],
-                  "reason": "The empty package initializer and generated/legacy API surface did not change the local CLI compatibility concerns reviewed in this update."
-                }
-              ],
-              "reviewedAt": "2026-07-10T14:11:21.150627Z",
-              "note": "Initial v2 Kaggle CLI reference review. Live validation was read-only; submission/upload behavior was exercised through controlled non-live boundaries."
-            },
-            {
-              "fromCommit": "cadeb92943cd63a0eeb730672b440a0b9b02af30",
-              "toCommit": "cadeb92943cd63a0eeb730672b440a0b9b02af30",
-              "relationFingerprint": "sha256:c56f58777d5bdb83102ab78947e5c75f486bb868743c6a4f68b4c697fbc30b08",
-              "accepted": [],
-              "skipped": [],
-              "reviewedAt": "2026-07-10T14:43:53.428800Z",
-              "note": "Post-update verification receipt: fresh agents validated current CLI descriptions and helper behavior, including controlled failure/output-safety paths; the source commit is unchanged and has no additional scoped delta."
-            }
-          ],
           "relationFingerprint": "sha256:c56f58777d5bdb83102ab78947e5c75f486bb868743c6a4f68b4c697fbc30b08",
           "sourceId": "Kaggle/kaggle-cli",
           "sourcePath": "src/kaggle",
           "sourceRef": "origin/HEAD",
           "lastReviewedCommit": "cadeb92943cd63a0eeb730672b440a0b9b02af30",
-          "reviewedAt": "2026-07-10T14:43:53.428800Z"
+          "reviewedAt": "2026-07-10T14:43:53.428800Z",
+          "accepted": [],
+          "skipped": [],
+          "note": "Post-update verification receipt: fresh agents validated current CLI descriptions and helper behavior, including controlled failure/output-safety paths; the source commit is unchanged and has no additional scoped delta."
         }
       }
     }
