@@ -1,6 +1,6 @@
 # ChatGPT Skill Validation Log
 
-Validated on 2026-07-04 using `playwright-cli` session `chatgpt` attached to Chrome Canary via the Playwright Extension.
+Validated on 2026-07-04 and revalidated against the redesigned UI on 2026-07-10 using `playwright-cli` session `chatgpt` attached to Chrome Canary via the Playwright Extension.
 
 ## Environment
 
@@ -23,9 +23,11 @@ Validated on 2026-07-04 using `playwright-cli` session `chatgpt` attached to Chr
 | Google Drive Project connector | verified to auth gate | `Add sources -> Google Drive` opened `Connect Google Drive` modal with `Continue to Google Drive`; did not proceed into external auth. |
 | Slack Project connector | verified to auth gate | `Add sources -> Slack` opened `Add Slack to ChatGPT` modal; did not proceed into external auth. |
 | Composer GitHub connector | verified | `Add files and more -> GitHub` was clickable; sent a connector validation prompt and got exact marker `GITHUB_CONNECTOR_OK`; conversation URL `/c/6a48fec6-882c-83e8-b4a4-b82e2c2fbc40`. |
-| Model/reasoning menu | verified | On Project composer, visible effort `Extra High`; menu included `Instant`, `Medium`, `High`, `Extra High`, `Pro Extended`, model `GPT-5.5`; selected `Pro Extended`, verified button label changed, then restored `Extra High`. |
+| Chat/Work surface split | verified 2026-07-10 | Home and Project pages expose `[role="group"][aria-label="Select chat surface"]` with `Chat` and `Work` radios. `Chat` was selected and verified via `aria-checked=true`; switching to Work showed a different `Work on anything` composer and `5.6 Sol / Light`, then Chat was restored. |
+| Model/reasoning menu | verified 2026-07-10 | In Chat mode the intelligence picker contained `Instant` (`5.5`), `Medium`, `High`, `Extra High`, and `Pro`; its model submenu contained checked `GPT-5.6 Sol`, plus `GPT-5.5`, `GPT-5.4`, `GPT-5.3`, and `o3`. `ensure-settings --surface Chat --model "GPT-5.6 Sol" --effort Pro` independently verified all three. The former visible `Pro Extended` label is now `Pro`. |
 | Worker farm plant | verified | `scripts/chatgpt_pwcli_farm.py` planted task018 manually and batch-planted task023/task025/task054 with 90s spacing and receipts. |
-| Worker farm harvest | verified | Harvested task018; batch-harvested task023 with enforced 30s spacing; wrote harvest JSON/Markdown and batch index. |
+| Worker farm harvest | verified 2026-07-10 | New assistant-scoped extraction correctly classified live Round7 examples: task254 `thinking_failed`, task260 incomplete `analysis_paused`, and task251/task271 `complete`. It no longer treats prompt/project body text as an answer. GPT-5.6 Sol Pro first reads now default to 150m; batch harvesting retains enforced 30s spacing. |
+| Multi-turn harvest reconciliation | verified 2026-07-10 | `reconcile-attempt` restored task266's complete first result after a weaker partial re-read, and all harvest snapshots/modules are preserved and variant-ranked instead of latest-wins. |
 
 ## Project Source Recipes Proven
 

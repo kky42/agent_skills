@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${1:-}" != "--legacy-write" ] || [ "$#" -ne 1 ]; then
+  cat >&2 <<'EOF'
+skill-migrate is legacy/import-only and cannot infer mirror vs owned.
+It writes only the frozen v1 thirdparty manifest. If a one-time legacy import
+is truly required, rerun: ./scripts/skill-migrate --legacy-write
+EOF
+  exit 2
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="$repo_root/thirdparty-skills.yml"
 lock_file="${XDG_STATE_HOME:-$HOME/.agents}/skills/.skill-lock.json"
@@ -155,5 +164,5 @@ output = {
 }
 
 manifest.write_text(dump_manifest(output), encoding="utf-8")
-print(f"wrote {len(output['skills'])} third-party skill record(s) to {manifest}")
+print(f"wrote {len(output['skills'])} legacy source record(s) to {manifest}")
 PY

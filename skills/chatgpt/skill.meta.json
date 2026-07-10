@@ -1,6 +1,0 @@
-{
-  "name": "chatgpt",
-  "kind": "personal",
-  "dependsOnSkills": ["playwright-cli"],
-  "dependsOnTools": []
-}

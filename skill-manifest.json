@@ -1,0 +1,423 @@
+{
+  "$schema": "./schemas/skill-manifest.schema.json",
+  "schemaVersion": 1,
+  "sources": {
+    "mattpocock/skills": {
+      "kind": "git",
+      "url": "https://github.com/mattpocock/skills.git",
+      "defaultRef": "origin/HEAD"
+    },
+    "jackwener/opencli": {
+      "kind": "git",
+      "url": "https://github.com/jackwener/opencli.git",
+      "defaultRef": "origin/HEAD"
+    },
+    "krzysztofdudek/ResearcherSkill": {
+      "kind": "git",
+      "url": "https://github.com/krzysztofdudek/ResearcherSkill.git",
+      "defaultRef": "origin/HEAD"
+    },
+    "microsoft/playwright-cli": {
+      "kind": "git",
+      "url": "https://github.com/microsoft/playwright-cli.git",
+      "defaultRef": "origin/HEAD"
+    },
+    "kky42/pievo": {
+      "kind": "git",
+      "url": "https://github.com/kky42/pievo.git",
+      "defaultRef": "origin/main"
+    },
+    "NVIDIA/nvidia-kaggle": {
+      "kind": "git",
+      "url": "https://github.com/NVIDIA/nvidia-kaggle.git",
+      "defaultRef": "origin/HEAD"
+    },
+    "Kaggle/kaggle-cli": {
+      "kind": "git",
+      "url": "https://github.com/Kaggle/kaggle-cli.git",
+      "defaultRef": "origin/HEAD"
+    },
+    "earendil-works/pi-mono": {
+      "kind": "git",
+      "url": "https://github.com/earendil-works/pi-mono.git",
+      "defaultRef": "origin/main"
+    }
+  },
+  "skills": {
+    "agent-prompt-engineering": {
+      "path": "skills/reasoning/agent-prompt-engineering",
+      "ownership": "owned"
+    },
+    "ask-matt": {
+      "path": "skills/thirdparty/ask-matt",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/ask-matt"
+      }
+    },
+    "chatgpt": {
+      "path": "skills/chatgpt",
+      "ownership": "owned",
+      "relations": [
+        {
+          "id": "playwright-cli",
+          "type": "skill-dependency",
+          "skill": "playwright-cli",
+          "verify": [
+            ["playwright-cli", "--help"]
+          ]
+        },
+        {
+          "id": "playwright-cli-tool",
+          "type": "tool-dependency",
+          "tool": {
+            "kind": "npm-global",
+            "package": "@playwright/cli",
+            "constraint": ">=0.1.15"
+          },
+          "updatePolicy": "compatible",
+          "verify": [
+            ["playwright-cli", "--version"],
+            ["playwright-cli", "--help"]
+          ]
+        },
+        {
+          "id": "chatgpt-local-helpers",
+          "type": "tool-dependency",
+          "tool": {
+            "kind": "local-helper",
+            "name": "chatgpt-local-helpers",
+            "path": "scripts"
+          },
+          "updatePolicy": "manual",
+          "verify": [
+            ["python3", "scripts/chatgpt-pw-lock", "--help"],
+            ["node", "--check", "scripts/deep-research-extract-current.js"]
+          ]
+        }
+      ]
+    },
+    "code-review": {
+      "path": "skills/thirdparty/code-review",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/code-review"
+      }
+    },
+    "codebase-design": {
+      "path": "skills/thirdparty/codebase-design",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/codebase-design"
+      }
+    },
+    "diagnosing-bugs": {
+      "path": "skills/thirdparty/diagnosing-bugs",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/diagnosing-bugs"
+      }
+    },
+    "domain-modeling": {
+      "path": "skills/thirdparty/domain-modeling",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/domain-modeling"
+      }
+    },
+    "grill-with-docs": {
+      "path": "skills/thirdparty/grill-with-docs",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/grill-with-docs"
+      }
+    },
+    "grilling": {
+      "path": "skills/thirdparty/grilling",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/productivity/grilling"
+      }
+    },
+    "handoff": {
+      "path": "skills/thirdparty/handoff",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/productivity/handoff"
+      }
+    },
+    "implement": {
+      "path": "skills/thirdparty/implement",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/implement"
+      }
+    },
+    "improve-codebase-architecture": {
+      "path": "skills/thirdparty/improve-codebase-architecture",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/improve-codebase-architecture"
+      }
+    },
+    "kaggle": {
+      "path": "skills/datascience/kaggle",
+      "ownership": "owned",
+      "relations": [
+        {
+          "id": "nvidia-kaggle",
+          "type": "content-source",
+          "source": {
+            "source": "NVIDIA/nvidia-kaggle",
+            "path": "skills/nvidia-kaggle-skill"
+          },
+          "watch": {
+            "include": ["**"],
+            "localPaths": ["SKILL.md", "refs/**", "scripts/nvidia/**"],
+            "localConcerns": [
+              {
+                "id": "nvidia-methodology-and-helpers",
+                "description": "Selectively adapt NVIDIA methodology and helper changes while preserving local validation, safety, and compatibility policy."
+              }
+            ]
+          }
+        },
+        {
+          "id": "kaggle-cli-contract",
+          "type": "reference",
+          "source": {
+            "source": "Kaggle/kaggle-cli",
+            "path": "src/kaggle"
+          },
+          "watch": {
+            "include": ["cli.py", "api/**"],
+            "localPaths": ["refs/cli/**", "scripts/**"],
+            "localConcerns": [
+              {
+                "id": "kaggle-cli-compatibility",
+                "description": "Review Kaggle CLI command and API changes that affect documented commands or native wrappers."
+              }
+            ]
+          }
+        },
+        {
+          "id": "playwright-cli",
+          "type": "skill-dependency",
+          "skill": "playwright-cli",
+          "verify": [
+            ["playwright-cli", "--help"]
+          ]
+        },
+        {
+          "id": "kaggle-cli-tool",
+          "type": "tool-dependency",
+          "tool": {
+            "kind": "command",
+            "name": "kaggle"
+          },
+          "updatePolicy": "compatible",
+          "verify": [
+            ["kaggle", "--version"],
+            ["kaggle", "competitions", "--help"]
+          ]
+        }
+      ]
+    },
+    "opencli-adapter-author": {
+      "path": "skills/thirdparty/opencli-adapter-author",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "jackwener/opencli",
+        "path": "skills/opencli-adapter-author"
+      }
+    },
+    "opencli-autofix": {
+      "path": "skills/thirdparty/opencli-autofix",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "jackwener/opencli",
+        "path": "skills/opencli-autofix"
+      }
+    },
+    "opencli-usage": {
+      "path": "skills/thirdparty/opencli-usage",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "jackwener/opencli",
+        "path": "skills/opencli-usage"
+      }
+    },
+    "pi-extension-dev": {
+      "path": "skills/pi_agent/pi-extension-dev",
+      "ownership": "owned",
+      "relations": [
+        {
+          "id": "pi-extension-sdk-docs",
+          "type": "content-source",
+          "source": {
+            "source": "earendil-works/pi-mono",
+            "path": "packages/coding-agent"
+          },
+          "watch": {
+            "include": ["README.md", "docs/extensions.md", "docs/sdk.md", "docs/packages.md", "docs/session-format.md", "docs/compaction.md", "examples/sdk/06-extensions.ts", "examples/sdk/11-sessions.ts"],
+            "localPaths": ["SKILL.md"],
+            "localConcerns": [
+              {
+                "id": "extension-development-contract",
+                "description": "Selectively update current Pi extension, package, SDK testing, persistence, and real-E2E guidance."
+              }
+            ]
+          }
+        },
+        {
+          "id": "pi-cli-tool",
+          "type": "tool-dependency",
+          "tool": {
+            "kind": "npm-global",
+            "package": "@earendil-works/pi-coding-agent",
+            "constraint": ">=0.80.6"
+          },
+          "updatePolicy": "compatible",
+          "verify": [
+            ["pi", "--version"],
+            ["pi", "--help"]
+          ]
+        }
+      ]
+    },
+    "pievo": {
+      "path": "skills/thirdparty/pievo",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "kky42/pievo",
+        "path": "skills/pievo"
+      }
+    },
+    "plan-refiner": {
+      "path": "skills/reasoning/plan-refiner",
+      "ownership": "owned"
+    },
+    "playwright-cli": {
+      "path": "skills/thirdparty/playwright-cli",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "microsoft/playwright-cli",
+        "path": "skills/playwright-cli"
+      }
+    },
+    "prototype": {
+      "path": "skills/thirdparty/prototype",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/prototype"
+      }
+    },
+    "research": {
+      "path": "skills/thirdparty/research",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/research"
+      }
+    },
+    "researcher": {
+      "path": "skills/thirdparty/researcher",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "krzysztofdudek/ResearcherSkill",
+        "path": "skills/researcher"
+      }
+    },
+    "resolving-merge-conflicts": {
+      "path": "skills/thirdparty/resolving-merge-conflicts",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/resolving-merge-conflicts"
+      }
+    },
+    "setup-matt-pocock-skills": {
+      "path": "skills/thirdparty/setup-matt-pocock-skills",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/setup-matt-pocock-skills"
+      }
+    },
+    "smart-search": {
+      "path": "skills/thirdparty/smart-search",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "jackwener/opencli",
+        "path": "skills/smart-search"
+      }
+    },
+    "tdd": {
+      "path": "skills/thirdparty/tdd",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/tdd"
+      }
+    },
+    "teach": {
+      "path": "skills/thirdparty/teach",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/productivity/teach"
+      }
+    },
+    "to-spec": {
+      "path": "skills/thirdparty/to-spec",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/to-spec"
+      }
+    },
+    "to-tickets": {
+      "path": "skills/thirdparty/to-tickets",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/to-tickets"
+      }
+    },
+    "triage": {
+      "path": "skills/thirdparty/triage",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/triage"
+      }
+    },
+    "wayfinder": {
+      "path": "skills/thirdparty/wayfinder",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/engineering/wayfinder"
+      }
+    },
+    "writing-great-skills": {
+      "path": "skills/thirdparty/writing-great-skills",
+      "ownership": "mirror",
+      "mirror": {
+        "source": "mattpocock/skills",
+        "path": "skills/productivity/writing-great-skills"
+      }
+    }
+  }
+}

@@ -66,8 +66,13 @@ Symptoms of a stale token:
 
 Recovery:
 
-1. Open/click the Playwright Extension icon in Chrome Canary, or inspect an existing `status.html` tab.
-2. If automation is allowed, this usually extracts the status text:
+1. Open/click the Playwright Extension icon in Chrome Canary, or inspect the extension `status.html` page. If no status tab exists, navigate an existing Chrome Canary tab to:
+
+   ```text
+   chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/status.html
+   ```
+
+2. If automation is allowed, this extracts the status text from an existing status tab:
 
    ```bash
    osascript <<'OSA'
@@ -87,15 +92,39 @@ Recovery:
    OSA
    ```
 
-3. Copy `PLAYWRIGHT_MCP_EXTENSION_TOKEN=<token>` into the local shell env source, or use it inline.
-4. Kill stale attach attempts if necessary:
+3. Treat the token printed by `status.html` as the source of truth. Do **not** trust a stale shell `PLAYWRIGHT_MCP_EXTENSION_TOKEN` or the `token=` query parameter in a failed `connect.html` tab; those can be the invalid token that caused the failure.
+4. Update the local shell env source (on this machine: `~/.zshenv.local`) to exactly the status-page token, or source/use that token inline for the current command.
+5. Kill stale attach attempts/extension daemons if necessary, but do not close Chrome Canary:
 
    ```bash
-   pkill -f 'playwright-cli attach --extension=chrome-canary' || true
+   pkill -f 'playwright-cli .*attach --extension=chrome-canary' || true
    pkill -f 'cliDaemon.js .*--extension' || true
    ```
 
-5. Retry attach and verify `tab-list` works.
+6. Close only stale `chrome-extension://.../connect.html` tabs created by failed attaches if they clutter the browser.
+7. Retry attach and verify both `playwright-cli list --json` and `playwright-cli -s=<session> tab-list` work.
+
+## 2026-07 Chat / Work Surface Split
+
+ChatGPT now exposes a top-center surface switch on home and Project pages:
+
+```text
+[role="group"][aria-label="Select chat surface"]
+  [role="radio"] Chat
+  [role="radio"] Work
+```
+
+- Select and verify `Chat` for normal ChatGPT, Project workers, GPT Pro, connectors, and Deep Research.
+- `Work` is a separate agent/workbench surface. It has a different composer/model picker and shares usage with Codex. Do not use it for Chat-mode worker farms unless the user explicitly requests Work.
+- Treat surface as part of every send receipt. Verify the chosen radio has `aria-checked="true"`; visible text alone is insufficient.
+- Surface state can drift globally. Re-check it after opening a Project and immediately before a farm send.
+
+In Chat mode, model and reasoning effort are independent selections. The observed July 2026 picker has:
+
+- Effort: `Instant` (shows `5.5`), `Medium`, `High`, `Extra High`, `Pro`.
+- Model submenu: checked `GPT-5.6 Sol`, plus `GPT-5.5`, `GPT-5.4`, `GPT-5.3`, and `o3`.
+
+For the user's “5.6 Pro” worker mode, verify the exact UI pair `GPT-5.6 Sol` + `Pro`. The old visible label `Pro Extended` is now `Pro`; accept an old request as an alias only after independently verifying model and effort. Never infer a model version from the effort pill.
 
 ## Lock Protocol
 
@@ -226,8 +255,8 @@ Suggested first harvest:
 | Medium | 2-4m | 1-2m |
 | High | 5-8m | 2-3m |
 | Extra High | 10-15m | 3-5m |
-| Pro Standard | 15-25m | 5-10m |
-| Pro Extended / Deep Research | 30-60m | 10-20m |
+| Pro (GPT-5.6 Sol) | 120-150m+; use 150m by default | 15-30m |
+| Deep Research | 30-60m | 10-20m |
 
 If ChatGPT shows `Too many requests` or `You're making requests too quickly`:
 
@@ -304,28 +333,40 @@ For long prompts, prefer generated `run-code` with `locator.fill()` over CLI `ty
 
 ## Normal Chat: Harvest
 
-Harvest the latest answer from a saved conversation URL:
+Harvest only assistant turns. The current Pro UI puts answers, partial reasoning, and terminal states in `section[data-turn="assistant"]`; it may not render `[data-message-author-role="assistant"]` at all.
 
 ```bash
 conversationUrl='https://chatgpt.com/c/...'
 playwright-cli -s="$CHATGPT_PW_SESSION" goto "$conversationUrl"
 playwright-cli --raw -s="$CHATGPT_PW_SESSION" run-code "async page => {
   await page.waitForTimeout(2000);
-  const stop = await page.locator('button[aria-label*=\"Stop\"], button[data-testid*=\"stop\"]').count().catch(() => 0);
-  const turns = await page.locator('section[data-testid^=\"conversation-turn-\"]').all();
-  let text = '';
-  for (const turn of turns) {
-    const body = await turn.innerText().catch(() => '');
-    if (/ChatGPT said:|Sora said:|Assistant/.test(body) || body.length > text.length) text = body;
-  }
-  return JSON.stringify({ generating: stop > 0, url: page.url(), title: await page.title(), text });
+  const stop = await page.locator('[data-testid=\"stop-button\"], button[aria-label^=\"Stop\"]').count().catch(() => 0);
+  const turns = page.locator('section[data-turn=\"assistant\"]');
+  const count = await turns.count();
+  const last = count ? turns.last() : null;
+  const text = last ? await last.innerText().catch(() => '') : '';
+  const statuses = last ? await last.locator('button').evaluateAll(bs => bs.map(b => (b.innerText || b.textContent || '').trim())) : [];
+  return JSON.stringify({
+    generating: stop > 0,
+    thinkingFailed: statuses.includes('Thinking failed'),
+    analysisPaused: statuses.includes('Analysis paused'),
+    assistantTurnCount: count,
+    url: page.url(),
+    title: await page.title(),
+    text
+  });
 }"
 ```
 
-Stability rule:
+Do not fall back to `<main>` or `<body>` as the answer. On Project pages that captures the user prompt, source list, and `WORKER_RESULT_JSON` template, causing false “harvested” results.
 
-- If `generating` is true, update `readAfterIso` and release the lock.
-- If text length changes between two reads separated by 3-10 seconds, wait and retry later.
+Terminal-state rule:
+
+- A visible stop control means `generating`; reschedule the read.
+- `Thinking failed` with no final answer is terminal and needs a same-conversation recovery follow-up.
+- `Analysis paused` is not uniformly fatal. If the assistant turn already contains the required final contract, harvest it; otherwise recover in the same conversation.
+- A loaded assistant turn without the requested final contract is partial, not complete.
+- No assistant turn is `no_content`/hydrating; back off instead of repeatedly reading the same URL.
 - Save raw JSON plus Markdown output. Do not summarize away source evidence unless the user asked for a summary.
 
 ## Deep Research
@@ -351,26 +392,18 @@ Deep Research is done when the extracted text contains a report body and the vis
 
 ## Model And Reasoning Effort
 
-Before sending, explicitly set and verify the desired model/effort when it matters.
-
-Known labels include:
-
-- `Instant`
-- `Medium`
-- `High`
-- `Extra High`
-- `Pro Standard`
-- `Pro Extended`
+Before sending, explicitly set and verify surface, model, and effort.
 
 Procedure:
 
-1. Snapshot the composer area.
-2. Click the current model/effort button near the composer.
-3. Click the desired option by visible text.
-4. Re-read the visible label and fail if it does not match.
-5. Mention the selected model/effort in the receipt.
+1. Select the `Chat` radio inside `[aria-label="Select chat surface"]`; verify `aria-checked="true"`.
+2. Open the composer intelligence pill (`button.__composer-pill[aria-haspopup="menu"]`).
+3. In `[data-testid="composer-intelligence-picker-content"]`, choose the effort (`Instant`, `Medium`, `High`, `Extra High`, or `Pro`).
+4. Hover/open the model submenu and select the exact model radio (`GPT-5.6 Sol`, `GPT-5.5`, etc.).
+5. Reopen both menus. Verify the requested effort and model each have `aria-checked="true"`.
+6. Record `surface`, exact model label, and exact effort label in the receipt.
 
-Do not assume a previous conversation's effort carries over correctly. ChatGPT UI state is global and can drift.
+Do not assume state carries over. Do not treat a matching `Pro` pill as proof of `GPT-5.6 Sol`, and do not use broad body-text presence as model verification.
 
 ## Tools And Connectors
 
@@ -406,11 +439,12 @@ Project send flow:
 1. Acquire lock.
 2. Open the Project URL, not ordinary `/new`.
 3. Verify the page title/body identifies the intended Project.
-4. Verify required Sources exist if the prompt depends on them.
-5. Select model/tool if needed.
-6. Fill composer and send.
-7. Save Project conversation URL in the receipt.
-8. Release lock while ChatGPT thinks.
+4. Select and verify the intended `Chat`/`Work` surface; farms default to `Chat`.
+5. Verify required Sources exist if the prompt depends on them.
+6. Select and independently verify model/effort/tool.
+7. Fill composer and send.
+8. Save Project conversation URL plus surface/model/effort in the receipt.
+9. Release lock while ChatGPT thinks.
 
 For runtime-dependent tasks, ask ChatGPT to run a concrete command and report exact output. Treat the answer as evidence, then validate locally before acting on code/results.
 
@@ -468,12 +502,15 @@ For high-volume work, do not let many agents touch the browser. Use a single Pla
 
 Hard rules:
 
-- One active browser writer.
+- One active browser writer; batch scripts should lock each browser operation, not hold the account lock while sleeping for an entire wave.
 - At least 60-90 seconds between sends for expensive models.
 - At least 30 seconds between harvest reads.
-- Every plant writes a receipt with conversation URL and `readAfterIso`.
-- Every harvest writes raw JSON/Markdown.
-- If a chat is still generating, keep it active and harvest again later.
+- Select `Chat` and verify exact `GPT-5.6 Sol` + `Pro` before Chat-mode planting.
+- Every plant writes a receipt with conversation URL, surface/model/effort, and `readAfterIso`.
+- Every harvest writes raw assistant-scoped JSON/Markdown and a state such as `complete`, `generating`, `thinking_failed`, `analysis_paused`, `partial`, or `no_content`.
+- Advance `readAfterIso` after partial/generating reads so old sessions do not starve never-read sessions.
+- Recover terminal/partial responses with paced same-conversation follow-ups; cap recovery attempts.
+- Scope status/harvest batches to the current attempt and checkpoint before the monitor-agent timeout.
 - For repeated prompt variants on the same task, use an attempt/session key instead of overwriting the active receipt.
 
 Parallel agents may prepare prompts, review outputs, or synthesize results outside the browser. They must not independently drive `CHATGPT_PW_SESSION`.
@@ -520,7 +557,7 @@ Before reporting success, verify the relevant evidence:
 - `playwright-cli list --json` shows the intended attached session.
 - `tab-list` does not show uncontrolled tab explosion.
 - URL matches normal chat, Project, source page, or conversation as intended.
-- Model/effort visible label matches the requested setting.
+- `Chat`/`Work` radio, exact model submenu radio, and effort radio independently match the requested setting.
 - Tool/connector pill is visible when requested.
 - Send result contains a non-`/new` conversation URL.
 - Receipt JSON exists and includes prompt hash/task id, conversation URL, model/tool, sent time, `readAfterIso`, and output path.

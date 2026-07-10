@@ -17,9 +17,9 @@ usage() {
 Usage:
   ./scripts/skill-sync [--skills-only|--tools-only|--no-tools|--check]
 
-This repo is the canonical source for both personal and vendored third-party
-skills. Third-party skills are updated by agent-reviewed upstream diffs into
-skills/thirdparty/, not by blind npx skills installs.
+This repo is the canonical source for owned and mirror skills. Ownership is
+recorded in skill-manifest.json and never inferred from a directory name.
+Mirror skills are replaceable upstream copies; owned skills remain local-first.
 
 Options:
   --skills-only      Link repo skills only; skip tool/plugin install.
@@ -27,12 +27,12 @@ Options:
   --private-only     Back-compat alias for --skills-only.
   --tools-only       Install declared tools/plugins only; skip skill links.
   --no-tools         Link repo skills and skip tool/plugin install.
-  --check            Validate metadata/dependencies without changing links/tools.
+  --check            Validate model, runtime links, and plugin state without changes.
   -h, --help         Show this help.
 
 Deprecated:
   --thirdparty-only, --install, --remove are no longer supported. Edit
-  thirdparty-skills.yml + skills/thirdparty/ manually, then run skill-sync.
+  skill-manifest.json and the canonical skills/ source, then run skill-sync.
 EOF
 }
 
@@ -63,7 +63,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --thirdparty-only|--install|--remove|--install=*|--remove=*)
-      die "$1 is deprecated: third-party skills are vendored under skills/thirdparty and updated by agent-reviewed diffs"
+      die "$1 is deprecated: manage ownership and source relations through skill-manifest.json"
       ;;
     -h|--help)
       usage
@@ -81,7 +81,6 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 python3 - "$repo_root" "$AGENT_SKILLS_SKILL_TARGETS" "$sync_skills" "$sync_tools" "$check_only" <<'PY'
-import json
 import os
 import shutil
 import subprocess
@@ -90,15 +89,18 @@ from pathlib import Path
 
 repo_root = Path(sys.argv[1]).resolve()
 skills_root = repo_root / "skills"
+sys.path.insert(0, str(repo_root / "scripts"))
+from skill_model import ModelError, load_catalog
 target_roots = [
     Path(os.path.expanduser(item)).resolve()
     for item in sys.argv[2].split(os.pathsep)
     if item
 ]
+if not target_roots:
+    raise SystemExit("AGENT_SKILLS_SKILL_TARGETS must contain at least one target directory")
 sync_skills = sys.argv[3] == "1"
 sync_tools = sys.argv[4] == "1"
 check_only = sys.argv[5] == "1"
-legacy_roots = target_roots + [Path.home() / ".pi" / "agent" / "skills"]
 
 
 def under(path: Path, parent: Path) -> bool:
@@ -113,124 +115,46 @@ def resolve(path: Path) -> Path:
     return path.resolve(strict=False)
 
 
-def clean_scalar(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-        return value[1:-1]
-    return value
+def managed_runtime_target(path: Path) -> bool:
+    return under(path, skills_root) or any(under(path, root) for root in target_roots)
 
 
-def frontmatter_name(skill_md: Path):
-    lines = skill_md.read_text(encoding="utf-8").splitlines()
-    if not lines or lines[0].strip() != "---":
-        return None
-    for line in lines[1:]:
-        if line.strip() == "---":
-            return None
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or ":" not in stripped:
-            continue
-        key, value = stripped.split(":", 1)
-        if key.strip() == "name":
-            name = clean_scalar(value)
-            return str(name) if name else None
-    return None
-
-
-def load_meta(skill_dir: Path) -> dict:
-    path = skill_dir / "skill.meta.json"
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as err:
-        raise SystemExit(f"{path}: invalid JSON: {err}")
-    if not isinstance(data, dict):
-        raise SystemExit(f"{path}: expected a JSON object")
-    return data
-
-
-def discover_skills():
-    desired = {}
-    metas = {}
-    for skill_md in sorted(skills_root.rglob("SKILL.md")):
-        skill_dir = skill_md.parent.resolve()
-        name = skill_dir.name
-        if name in desired:
-            raise SystemExit(
-                f"duplicate skill directory name: {name}\n"
-                f"  {desired[name]}\n"
-                f"  {skill_dir}"
-            )
-        declared_name = frontmatter_name(skill_md)
-        if declared_name and declared_name != name:
-            raise SystemExit(
-                f"{skill_md}: frontmatter name {declared_name!r} "
-                f"does not match directory name {name!r}"
-            )
-        desired[name] = skill_dir
-        meta = load_meta(skill_dir)
-        if meta:
-            if meta.get("name") and meta.get("name") != name:
-                raise SystemExit(f"{skill_dir/'skill.meta.json'}: name must be {name!r}")
-            metas[name] = meta
-    return desired, metas
-
-
-def validate_dependencies(desired: dict, metas: dict):
-    errors = []
-    for name, meta in sorted(metas.items()):
-        for dep in meta.get("dependsOnSkills", []) or []:
-            if dep not in desired:
-                errors.append(f"{name}: missing skill dependency {dep!r}")
-        for tool in meta.get("dependsOnTools", []) or []:
-            if not isinstance(tool, dict):
-                errors.append(f"{name}: dependsOnTools entries must be objects")
+def link_skills(desired: dict, records: dict):
+    if check_only:
+        errors = []
+        for target_root in target_roots:
+            if not target_root.is_dir():
+                errors.append(f"missing runtime skill root: {target_root}")
                 continue
-            if tool.get("kind") == "opencli-plugin":
-                rel = tool.get("path")
-                plugin_name = tool.get("name")
-                if not rel or not plugin_name:
-                    errors.append(f"{name}: opencli-plugin tool requires name and path")
+            for name, source in sorted(desired.items()):
+                target = target_root / name
+                if not target.is_symlink():
+                    kind = "missing" if not target.exists() else "not a symlink"
+                    errors.append(f"{target}: {kind}")
+                elif resolve(target) != resolve(source):
+                    errors.append(f"{target}: points to {resolve(target)}, expected {resolve(source)}")
+            for child in target_root.iterdir():
+                if not child.is_symlink() or child.name in desired:
                     continue
-                path = (desired[name] / rel).resolve()
-                if not path.exists():
-                    errors.append(f"{name}: opencli-plugin {plugin_name!r} path does not exist: {path}")
-                if not (path / "opencli-plugin.json").exists():
-                    errors.append(f"{name}: opencli-plugin {plugin_name!r} missing opencli-plugin.json at {path}")
-    if errors:
-        raise SystemExit("dependency validation failed:\n- " + "\n- ".join(errors))
-
-
-def link_skills(desired: dict):
-    seen_roots = set()
-    for root in legacy_roots:
-        root = root.resolve()
-        if root in seen_roots:
-            continue
-        seen_roots.add(root)
-        for legacy_name in ("agent_hub-private", "agent_hub_skills"):
-            legacy_path = root / legacy_name
-            if check_only:
-                continue
-            if legacy_path.is_symlink():
-                legacy_path.unlink()
-                print(f"removed legacy skill link: {legacy_path}", flush=True)
-            elif legacy_path.is_dir():
-                shutil.rmtree(legacy_path)
-                print(f"removed legacy skill copy: {legacy_path}", flush=True)
+                if managed_runtime_target(resolve(child)):
+                    errors.append(f"stale runtime skill link: {child} -> {resolve(child)}")
+        if errors:
+            raise SystemExit("runtime skill link check failed:\n- " + "\n- ".join(errors))
+        return
 
     for target_root in target_roots:
-        if check_only:
-            continue
         target_root.mkdir(parents=True, exist_ok=True)
         for child in target_root.iterdir():
             if not child.is_symlink():
                 continue
             linked_target = resolve(child)
-            if not under(linked_target, skills_root):
-                continue
-            if child.name not in desired or resolve(desired[child.name]) != linked_target:
+            stale_deleted = child.name not in desired and managed_runtime_target(linked_target)
+            stale_repo_link = (
+                child.name in desired
+                and under(linked_target, skills_root)
+                and resolve(desired[child.name]) != linked_target
+            )
+            if stale_deleted or stale_repo_link:
                 child.unlink()
                 print(f"removed stale skill link: {child}", flush=True)
 
@@ -241,12 +165,12 @@ def link_skills(desired: dict):
                     linked_target = resolve(target)
                     if linked_target == resolve(source):
                         continue
-                    if under(linked_target, skills_root):
+                    if managed_runtime_target(linked_target):
                         target.unlink()
-                    elif under(source, skills_root / "thirdparty"):
+                    elif records[name].ownership == "mirror":
                         old_target = os.readlink(target)
                         target.unlink()
-                        print(f"replaced external skill symlink with repo link: {target} (was {old_target})", flush=True)
+                        print(f"replaced external mirror symlink with repo link: {target} (was {old_target})", flush=True)
                     else:
                         raise SystemExit(
                             f"error: {target} already exists as an unmanaged symlink "
@@ -256,7 +180,7 @@ def link_skills(desired: dict):
                     may_replace_managed_copy = (
                         target.is_dir()
                         and (target / "SKILL.md").exists()
-                        and (under(source, skills_root / "thirdparty") or os.environ.get("AGENT_SKILLS_REPLACE_EXISTING_SKILL_DIRS") == "1")
+                        and os.environ.get("AGENT_SKILLS_REPLACE_EXISTING_SKILL_DIRS") == "1"
                     )
                     if may_replace_managed_copy:
                         shutil.rmtree(target)
@@ -267,14 +191,15 @@ def link_skills(desired: dict):
             print(f"linked skill: {target} -> {source}", flush=True)
 
 
-def iter_opencli_plugins(desired: dict, metas: dict):
+def iter_opencli_plugins(records: dict):
     seen = {}
-    for skill_name, meta in sorted(metas.items()):
-        for tool in meta.get("dependsOnTools", []) or []:
-            if not isinstance(tool, dict) or tool.get("kind") != "opencli-plugin":
+    for skill_name, record in sorted(records.items()):
+        for relation in record.tool_relations:
+            tool = relation.get("tool") or {}
+            if tool.get("kind") != "opencli-plugin":
                 continue
             plugin_name = tool["name"]
-            path = (desired[skill_name] / tool["path"]).resolve()
+            path = (record.path / tool["path"]).resolve()
             if plugin_name in seen and seen[plugin_name] != path:
                 raise SystemExit(f"opencli plugin {plugin_name!r} declared with multiple paths: {seen[plugin_name]} and {path}")
             seen[plugin_name] = path
@@ -290,7 +215,11 @@ def install_opencli_plugins(plugins):
     for name, source in plugins:
         target = plugins_root / name
         if check_only:
-            print(f"would ensure opencli plugin: {name} -> {source}", flush=True)
+            if not target.is_symlink() or resolve(target) != source:
+                raise SystemExit(f"opencli plugin link check failed: {target} must point to {source}")
+            host_link = source / "node_modules" / "@jackwener" / "opencli"
+            if not (host_link.exists() or host_link.is_symlink()):
+                raise SystemExit(f"opencli plugin runtime link is missing: {host_link}")
             continue
         if target.exists() or target.is_symlink():
             if target.is_symlink() and resolve(target) == source:
@@ -307,21 +236,30 @@ def install_opencli_plugins(plugins):
         subprocess.run(["opencli", "plugin", "install", source.as_uri()], check=True)
 
 
-desired, metas = discover_skills()
-validate_dependencies(desired, metas)
+try:
+    catalog = load_catalog(repo_root)
+except ModelError as error:
+    raise SystemExit(str(error))
+desired = {name: record.path for name, record in catalog.skills.items()}
+records = catalog.skills
 
 if sync_skills:
-    link_skills(desired)
+    link_skills(desired, records)
 else:
     print("skipped skill link sync", flush=True)
 
 if sync_tools:
-    install_opencli_plugins(iter_opencli_plugins(desired, metas))
+    install_opencli_plugins(iter_opencli_plugins(records))
 else:
     print("skipped tool/plugin sync", flush=True)
 
 if check_only:
-    print(f"check ok: {len(desired)} skills, {len(metas)} metadata files", flush=True)
+    print(
+        f"check ok: {len(desired)} skills; "
+        f"{catalog.explicit_ownership_count} explicit ownership records, "
+        f"{catalog.legacy_source_count} legacy source records",
+        flush=True,
+    )
 else:
     print(f"skill sync complete: {len(desired)} repo skills", flush=True)
 PY

@@ -1,115 +1,134 @@
 #!/usr/bin/env python3
-"""Guarded updater for vendored third-party skills.
+"""Inspect tracked source changes and update explicit mirror skills.
 
-This script treats the upstream repository as source of truth, but never blindly
-overwrites local vendored edits. It discovers the upstream skill by SKILL.md
-frontmatter name, compares base/ours/theirs, and either reports what changed or
-applies a guarded update.
+Mirror skills are replaceable upstream copies. Owned skills remain authoritative:
+their content/reference sources are checked for scoped deltas, but this command
+never merges or applies those deltas. After selective adoption, use
+--record-review to record accepted and skipped changes.
 """
-
 from __future__ import annotations
 
 import argparse
-import filecmp
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-LOCK_PATH = REPO_ROOT / "thirdparty-lock.json"
-MANIFEST_PATH = REPO_ROOT / "thirdparty-skills.yml"
+REPO_ROOT = Path(
+    os.environ.get("AGENT_SKILLS_REPO_ROOT", Path(__file__).resolve().parents[1])
+).resolve()
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from skill_model import ModelError, frontmatter_name, load_catalog, validate_catalog
+
+LOCK_PATH = REPO_ROOT / "skill-lock.json"
+LEGACY_LOCK_PATH = REPO_ROOT / "thirdparty-lock.json"
 
 
 class UpdateError(Exception):
     pass
 
 
-def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True, capture: bool = True) -> str:
-    proc = subprocess.run(
-        cmd,
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    check: bool = True,
+    capture: bool = True,
+) -> str:
+    process = subprocess.run(
+        command,
         cwd=str(cwd) if cwd else None,
         text=True,
         capture_output=capture,
     )
-    if check and proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise UpdateError(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{detail}")
-    return (proc.stdout or "").strip()
+    if check and process.returncode != 0:
+        detail = (process.stderr or process.stdout or "").strip()
+        raise UpdateError(
+            f"command failed ({process.returncode}): {' '.join(command)}\n{detail}"
+        )
+    return (process.stdout or "").strip()
 
 
-def clean_scalar(value: str):
-    value = value.strip()
-    if " #" in value:
-        value = value.split(" #", 1)[0].rstrip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-        return value[1:-1]
-    return value
-
-
-def load_manifest(path: Path) -> dict[str, dict]:
-    if not path.exists():
+def directory_snapshot(root: Path | None) -> dict[str, tuple[str, bytes]]:
+    if root is None or not root.exists():
         return {}
-    skills: list[dict] = []
-    current = None
-    current_list_key = None
-    for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        stripped = raw.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("skills:"):
-            current = None
-            current_list_key = None
-            continue
-        if stripped.startswith("- "):
-            item = stripped[2:].strip()
-            if ":" in item:
-                key, value = item.split(":", 1)
-                if key.strip() == "skill":
-                    current = {"skill": clean_scalar(value)}
-                    skills.append(current)
-                    current_list_key = None
-                    continue
-            if current is None or current_list_key is None:
-                raise UpdateError(f"{path}:{line_no}: list item without a list key")
-            current.setdefault(current_list_key, []).append(clean_scalar(item))
-            continue
-        if current is None:
-            raise UpdateError(f"{path}:{line_no}: expected a skill entry")
-        if ":" not in stripped:
-            raise UpdateError(f"{path}:{line_no}: expected key: value")
-        key, value = stripped.split(":", 1)
-        key = key.strip()
-        if value.strip():
-            current[key] = clean_scalar(value)
-            current_list_key = None
-        else:
-            current[key] = []
-            current_list_key = key
-    return {item["skill"]: item for item in skills if item.get("skill")}
+    snapshot: dict[str, tuple[str, bytes]] = {}
+
+    def walk(directory: Path, prefix: str = "") -> None:
+        for entry in sorted(os.scandir(directory), key=lambda item: item.name):
+            relative = prefix + entry.name
+            mode = entry.stat(follow_symlinks=False).st_mode
+            if stat.S_ISDIR(mode):
+                walk(Path(entry.path), relative + "/")
+            elif stat.S_ISLNK(mode):
+                snapshot[relative] = (
+                    "symlink",
+                    os.readlink(entry.path).encode("utf-8", errors="surrogateescape"),
+                )
+            elif stat.S_ISREG(mode):
+                kind = "executable" if mode & stat.S_IXUSR else "file"
+                snapshot[relative] = (kind, Path(entry.path).read_bytes())
+            else:
+                raise UpdateError(f"unsupported filesystem entry in skill directory: {entry.path}")
+
+    walk(root)
+    return snapshot
+
+
+def snapshot_hash(snapshot: dict[str, tuple[str, bytes]]) -> str:
+    digest = hashlib.sha256()
+
+    def field(value: bytes) -> None:
+        digest.update(len(value).to_bytes(8, "big"))
+        digest.update(value)
+
+    digest.update(len(snapshot).to_bytes(8, "big"))
+    for relative, (kind, content) in sorted(snapshot.items()):
+        field(relative.encode("utf-8", errors="surrogateescape"))
+        field(kind.encode("ascii"))
+        field(content)
+    return "sha256:" + digest.hexdigest()
 
 
 def folder_hash(root: Path) -> str:
-    h = hashlib.sha1()
-    if not root.exists():
-        return ""
-    for path in sorted(root.rglob("*")):
-        if path.is_file() and not any(part == ".git" for part in path.parts):
-            rel = path.relative_to(root).as_posix()
-            h.update(rel.encode("utf-8"))
-            h.update(b"\0")
-            h.update(path.read_bytes())
-            h.update(b"\0")
-    return h.hexdigest()
+    return snapshot_hash(directory_snapshot(root))
 
 
-def frontmatter_name(text: str) -> str | None:
+def git_object_exists(repo: Path, commit: str, path: str | None = None) -> bool:
+    spec = f"{commit}:{path}" if path else f"{commit}^{{commit}}"
+    process = subprocess.run(
+        ["git", "cat-file", "-e", spec],
+        cwd=str(repo),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return process.returncode == 0
+
+
+def git_show(repo: Path, commit: str, path: str) -> str:
+    return run(["git", "show", f"{commit}:{path}"], cwd=repo)
+
+
+def tree_files(repo: Path, commit: str) -> list[str]:
+    output = run(["git", "ls-tree", "-r", "--name-only", commit], cwd=repo)
+    return [line for line in output.splitlines() if line]
+
+
+def frontmatter_name_text(text: str) -> str | None:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return None
@@ -121,352 +140,858 @@ def frontmatter_name(text: str) -> str | None:
             continue
         key, value = stripped.split(":", 1)
         if key.strip() == "name":
-            value = clean_scalar(value)
-            return str(value) if value else None
+            value = value.strip().strip("'\"")
+            return value or None
     return None
 
 
-def derive_source_url(source: str) -> str:
-    if source.startswith("http://") or source.startswith("https://") or source.startswith("git@"):
-        return source
-    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source):
-        return f"https://github.com/{source}.git"
-    raise UpdateError(f"cannot derive git URL from source {source!r}; add sourceUrl to thirdparty-lock.json")
-
-
-def git_object_exists(repo: Path, commit: str, path: str) -> bool:
-    proc = subprocess.run(
-        ["git", "cat-file", "-e", f"{commit}:{path}"],
-        cwd=str(repo),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return proc.returncode == 0
-
-
-def git_show(repo: Path, commit: str, path: str) -> str:
-    return run(["git", "show", f"{commit}:{path}"], cwd=repo)
-
-
-def tree_files(repo: Path, commit: str) -> list[str]:
-    out = run(["git", "ls-tree", "-r", "--name-only", commit], cwd=repo)
-    return [line for line in out.splitlines() if line]
-
-
-def discover_skill_path(repo: Path, commit: str, skill: str, preferred: str | None) -> tuple[str, list[str]]:
-    if preferred and git_object_exists(repo, commit, preferred):
-        try:
-            declared = frontmatter_name(git_show(repo, commit, preferred))
-        except UpdateError:
-            declared = None
-        if declared in (None, skill):
-            return preferred, []
+def discover_skill_dir(
+    repo: Path,
+    commit: str,
+    skill: str,
+    preferred_dir: str | None,
+) -> str:
+    if preferred_dir:
+        preferred_skill = (PurePosixPath(preferred_dir) / "SKILL.md").as_posix()
+        if git_object_exists(repo, commit, preferred_skill):
+            declared = frontmatter_name_text(git_show(repo, commit, preferred_skill))
+            if declared in (None, skill):
+                return PurePosixPath(preferred_dir).as_posix()
 
     candidates = []
     for file in tree_files(repo, commit):
         if file == "SKILL.md" or file.endswith("/SKILL.md"):
             try:
-                declared = frontmatter_name(git_show(repo, commit, file))
+                declared = frontmatter_name_text(git_show(repo, commit, file))
             except UpdateError:
                 continue
             if declared == skill:
-                candidates.append(file)
-
+                candidates.append(PurePosixPath(file).parent.as_posix())
     if len(candidates) == 1:
-        return candidates[0], []
+        if candidates[0] == ".":
+            raise UpdateError("root-level SKILL.md is not supported")
+        return candidates[0]
     if not candidates:
-        # Last-resort hint list for the agent/human report.
-        hint = [file for file in tree_files(repo, commit) if file == "SKILL.md" or file.endswith("/SKILL.md")]
         raise UpdateError(
             f"could not find upstream skill {skill!r} at {commit}; "
-            f"preferred path {preferred!r} missing and no SKILL.md frontmatter name matched.\n"
-            f"SKILL.md candidates: {hint[:30]}"
+            f"preferred directory {preferred_dir!r} is absent"
         )
-    raise UpdateError(f"ambiguous upstream skill {skill!r} at {commit}; candidates: {candidates}")
+    raise UpdateError(
+        f"ambiguous upstream skill {skill!r} at {commit}; candidates: {candidates}"
+    )
 
 
-def export_skill_dir(repo: Path, commit: str, skill_path: str, dest: Path) -> None:
-    skill_dir = str(Path(skill_path).parent)
-    if skill_dir == ".":
-        raise UpdateError("root-level SKILL.md is not supported by this updater yet")
-    tmp = Path(tempfile.mkdtemp(prefix="thirdparty-archive."))
-    try:
-        archive = subprocess.Popen(["git", "archive", commit, skill_dir], cwd=str(repo), stdout=subprocess.PIPE)
-        tar = subprocess.run(["tar", "-x", "-C", str(tmp)], stdin=archive.stdout, text=False)
-        if archive.stdout:
-            archive.stdout.close()
-        rc = archive.wait()
-        if rc != 0 or tar.returncode != 0:
-            raise UpdateError(f"failed to archive {commit}:{skill_dir}")
-        extracted = tmp / skill_dir
-        if not extracted.exists():
-            raise UpdateError(f"archive did not contain {skill_dir}")
-        if dest.exists():
-            shutil.rmtree(dest)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(extracted), str(dest))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
-def replace_dir(src: Path, dest: Path) -> None:
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, dest)
-
-
-def copy_dir_contents(src: Path, dest: Path) -> None:
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True, exist_ok=True)
-    for item in src.iterdir():
-        if item.name == ".git":
-            continue
-        target = dest / item.name
-        if item.is_dir():
-            shutil.copytree(item, target)
+def export_directory(repo: Path, commit: str, source_dir: str, destination: Path) -> None:
+    """Materialize the exact tracked Git directory without archive attributes/filters."""
+    source_dir = PurePosixPath(source_dir).as_posix().rstrip("/")
+    if source_dir in {"", "."}:
+        raise UpdateError("root-level source directories are not supported")
+    if not git_object_exists(repo, commit, source_dir):
+        raise UpdateError(f"source directory missing: {commit}:{source_dir}")
+    process = subprocess.run(
+        ["git", "ls-tree", "-rz", "--full-tree", commit, "--", source_dir],
+        cwd=str(repo),
+        capture_output=True,
+    )
+    if process.returncode != 0:
+        detail = process.stderr.decode("utf-8", errors="replace").strip()
+        raise UpdateError(f"failed to list {commit}:{source_dir}: {detail}")
+    if destination.exists() or destination.is_symlink():
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
         else:
-            shutil.copy2(item, target)
+            destination.unlink()
+    destination.mkdir(parents=True, exist_ok=True)
+    prefix = source_dir.encode("utf-8", errors="surrogateescape") + b"/"
+    expected: dict[str, tuple[str, bytes]] = {}
+    for record in process.stdout.split(b"\0"):
+        if not record:
+            continue
+        header, separator, raw_path = record.partition(b"\t")
+        if not separator:
+            raise UpdateError(f"unexpected git ls-tree record for {source_dir!r}")
+        mode, object_type, object_id = header.decode("ascii").split()
+        if raw_path == source_dir.encode("utf-8", errors="surrogateescape"):
+            continue
+        if not raw_path.startswith(prefix):
+            raise UpdateError(f"git returned path outside tracked source directory: {raw_path!r}")
+        relative = raw_path[len(prefix):].decode("utf-8", errors="surrogateescape")
+        relative_path = PurePosixPath(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise UpdateError(f"unsafe path in git source: {relative!r}")
+        target = destination / relative
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise UpdateError(f"cannot represent git path {source_dir}/{relative}: {error}") from error
+        if os.path.lexists(target):
+            raise UpdateError(
+                f"git paths collide on this filesystem at {source_dir}/{relative}; fail closed"
+            )
+        if object_type == "commit" or mode == "160000":
+            raise UpdateError(
+                f"git submodule entries are not supported in skill sources: {source_dir}/{relative}"
+            )
+        if object_type != "blob":
+            continue
+        blob = subprocess.run(
+            ["git", "cat-file", "blob", object_id],
+            cwd=str(repo),
+            capture_output=True,
+        )
+        if blob.returncode != 0:
+            raise UpdateError(f"failed to read git blob {object_id}")
+        if mode == "120000":
+            content = blob.stdout
+            kind = "symlink"
+            os.symlink(content.decode("utf-8", errors="surrogateescape"), target)
+        elif mode in {"100644", "100755"}:
+            content = blob.stdout
+            kind = "executable" if mode == "100755" else "file"
+            target.write_bytes(content)
+            target.chmod(0o755 if mode == "100755" else 0o644)
+        else:
+            raise UpdateError(f"unsupported git mode {mode} at {source_dir}/{relative}")
+        expected[relative] = (kind, content)
+    if not expected:
+        raise UpdateError(f"source directory has no tracked files: {commit}:{source_dir}")
+    actual = directory_snapshot(destination)
+    if actual != expected:
+        missing = sorted(set(expected) - set(actual))
+        extra = sorted(set(actual) - set(expected))
+        changed = sorted(
+            path for path in set(actual) & set(expected) if actual[path] != expected[path]
+        )
+        raise UpdateError(
+            "filesystem cannot exactly materialize the git directory; "
+            f"missing={missing}, extra={extra}, changed={changed}"
+        )
 
 
-def init_merge_repo(base_dir: Path, ours_dir: Path, theirs_dir: Path) -> tuple[Path, bool]:
-    repo = Path(tempfile.mkdtemp(prefix="thirdparty-merge."))
-    run(["git", "init", "-q"], cwd=repo)
-    run(["git", "config", "user.email", "agent-skills@example.invalid"], cwd=repo)
-    run(["git", "config", "user.name", "agent-skills updater"], cwd=repo)
-
-    copy_dir_contents(base_dir, repo)
-    run(["git", "add", "."], cwd=repo)
-    run(["git", "commit", "-q", "-m", "base"], cwd=repo)
-
-    run(["git", "checkout", "-q", "-b", "ours"], cwd=repo)
-    copy_dir_contents(ours_dir, repo)
-    run(["git", "add", "-A"], cwd=repo)
-    run(["git", "commit", "-q", "-m", "ours"], cwd=repo)
-
-    run(["git", "checkout", "-q", "-b", "theirs", "master"], cwd=repo)
-    copy_dir_contents(theirs_dir, repo)
-    run(["git", "add", "-A"], cwd=repo)
-    run(["git", "commit", "-q", "-m", "theirs"], cwd=repo)
-
-    run(["git", "checkout", "-q", "ours"], cwd=repo)
-    proc = subprocess.run(["git", "merge", "--no-edit", "theirs"], cwd=str(repo), text=True, capture_output=True)
-    return repo, proc.returncode == 0
+def directory_diff(left: Path | None, right: Path) -> list[dict[str, str]]:
+    left_files = directory_snapshot(left)
+    right_files = directory_snapshot(right)
+    changes: list[dict[str, str]] = []
+    for relative in sorted(set(left_files) | set(right_files)):
+        if relative not in left_files:
+            changes.append({"status": "added", "path": relative})
+        elif relative not in right_files:
+            changes.append({"status": "removed", "path": relative})
+        elif left_files[relative] != right_files[relative]:
+            changes.append({"status": "modified", "path": relative})
+    return changes
 
 
-def summarize_dir_diff(a: Path, b: Path) -> list[str]:
-    if not a.exists() or not b.exists():
-        return ["one side is missing"]
-    lines = []
-    cmp = filecmp.dircmp(a, b)
-
-    def walk(dc: filecmp.dircmp, prefix: str = ""):
-        for name in dc.left_only:
-            lines.append(f"- removed upstream? only-left {prefix}{name}")
-        for name in dc.right_only:
-            lines.append(f"- added upstream? only-right {prefix}{name}")
-        for name in dc.diff_files:
-            lines.append(f"- modified {prefix}{name}")
-        for sub in dc.subdirs.values():
-            walk(sub, prefix + sub.left.name + "/")
-
-    walk(cmp)
-    return lines[:80]
+def summarize_dir_diff(left: Path, right: Path) -> list[str]:
+    """Compatibility helper retained for diagnostics and nested-diff tests."""
+    return [
+        f"- {change['status']} {change['path']}"
+        for change in directory_diff(left, right)[:80]
+    ]
 
 
-def update_lock_entry(lock: dict, skill: str, entry: dict, *, source_url: str, source_ref: str, source_commit: str, skill_path: str, upstream_hash: str, vendored_hash: str) -> None:
-    updated = dict(entry)
-    updated["sourceUrl"] = source_url
-    updated["sourceRef"] = source_ref
-    updated["sourceCommit"] = source_commit
-    updated["sourceWorktreeDirty"] = False
-    updated["skillPath"] = skill_path
-    updated["skillFolderHash"] = upstream_hash
-    updated["vendoredFolderHash"] = vendored_hash
-    updated["localPatch"] = upstream_hash != vendored_hash
-    updated["updatedAt"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    updated.setdefault("vendoredPath", f"skills/thirdparty/{skill}")
-    lock.setdefault("skills", {})[skill] = updated
+def glob_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a small path glob where * never crosses '/' and ** may."""
+    pattern = pattern.removeprefix("./")
+    pieces = ["^"]
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "*":
+            if index + 1 < len(pattern) and pattern[index + 1] == "*":
+                index += 2
+                if index < len(pattern) and pattern[index] == "/":
+                    pieces.append("(?:.*/)?")
+                    index += 1
+                else:
+                    pieces.append(".*")
+                continue
+            pieces.append("[^/]*")
+        elif char == "?":
+            pieces.append("[^/]")
+        else:
+            pieces.append(re.escape(char))
+        index += 1
+    pieces.append("$")
+    return re.compile("".join(pieces))
 
 
-def build_context(skill: str, ref_override: str | None):
+def scoped_changes(
+    changes: list[dict[str, str]],
+    watch: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    watch = watch or {}
+    include = [glob_regex(pattern) for pattern in (watch.get("include") or ["**"])]
+    exclude = [glob_regex(pattern) for pattern in (watch.get("exclude") or [])]
+    return [
+        change
+        for change in changes
+        if any(pattern.fullmatch(change["path"]) for pattern in include)
+        and not any(pattern.fullmatch(change["path"]) for pattern in exclude)
+    ]
+
+
+def relation_fingerprint(
+    catalog,
+    relation: dict[str, Any],
+    *,
+    effective_ref: str | None = None,
+) -> str:
+    locator = relation.get("source") or {}
+    source = catalog.sources.get(locator.get("source")) or {}
+    payload = {
+        "type": relation.get("type"),
+        "source": {
+            "id": locator.get("source"),
+            "url": source.get("url"),
+            "path": locator.get("path"),
+            "ref": effective_ref or locator.get("ref") or source.get("defaultRef") or "origin/HEAD",
+        },
+        "watch": relation.get("watch") or {},
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def load_lock() -> dict[str, Any]:
     if not LOCK_PATH.exists():
-        raise UpdateError("thirdparty-lock.json not found")
-    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
-    manifest = load_manifest(MANIFEST_PATH)
-    entry = dict(lock.get("skills", {}).get(skill) or {})
-    if not entry and skill in manifest:
-        entry = dict(manifest[skill])
-    if not entry:
-        raise UpdateError(f"unknown third-party skill: {skill}")
+        return {"$schema": "./schemas/skill-lock.schema.json", "schemaVersion": 1, "skills": {}}
+    try:
+        value = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise UpdateError(f"{LOCK_PATH}: invalid JSON: {error}") from error
+    if not isinstance(value, dict) or value.get("schemaVersion") != 1:
+        raise UpdateError(f"{LOCK_PATH}: expected schemaVersion 1 object")
+    value.setdefault("skills", {})
+    return value
 
-    source = entry.get("source") or manifest.get(skill, {}).get("source")
-    source_url = entry.get("sourceUrl") or derive_source_url(source)
-    vendored_rel = entry.get("vendoredPath") or f"skills/thirdparty/{skill}"
-    vendored = (REPO_ROOT / vendored_rel).resolve()
-    if not vendored.exists():
-        raise UpdateError(f"vendored skill path does not exist: {vendored}")
 
-    work = Path(tempfile.mkdtemp(prefix=f"thirdparty-update-{skill}."))
+def validate_prospective_lock(catalog, lock: dict[str, Any]) -> None:
+    previous = catalog.lock
+    catalog.lock = lock
+    try:
+        errors = validate_catalog(catalog)
+    finally:
+        catalog.lock = previous
+    if errors:
+        raise UpdateError("refusing to write invalid skill-lock.json:\n- " + "\n- ".join(errors))
+
+
+def write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        json.dumps(value, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def normalize_ref(ref: str, *, override: bool) -> str:
+    if ref.startswith("refs/heads/"):
+        return "origin/" + ref.split("/", 2)[-1]
+    if override and not re.fullmatch(r"[0-9a-f]{7,40}", ref) and "/" not in ref:
+        return "origin/" + ref
+    return ref
+
+
+def ensure_commit(repo: Path, commit: str) -> None:
+    if git_object_exists(repo, commit):
+        return
+    run(["git", "fetch", "--quiet", "origin", commit], cwd=repo)
+    if not git_object_exists(repo, commit):
+        raise UpdateError(f"source commit is unavailable: {commit}")
+
+
+def legacy_entry(catalog, skill: str) -> dict[str, Any]:
+    return dict((catalog.legacy_lock.get("skills") or {}).get(skill) or {})
+
+
+def resolved_source_path(
+    repo: Path,
+    commit: str,
+    skill: str,
+    preferred: str,
+    *,
+    allow_discovery: bool,
+) -> str:
+    if git_object_exists(repo, commit, preferred):
+        return preferred
+    if allow_discovery:
+        return discover_skill_dir(repo, commit, skill, preferred)
+    raise UpdateError(
+        f"tracked source path moved or disappeared: {commit}:{preferred}; "
+        "update the manifest mapping after review"
+    )
+
+
+def build_source_context(
+    catalog,
+    skill: str,
+    relation: dict[str, Any],
+    ref_override: str | None,
+) -> dict[str, Any]:
+    locator = relation.get("source") or {}
+    if "skill" in locator:
+        raise UpdateError(
+            f"relation {relation.get('id')!r} tracks local skill {locator.get('skill')!r}; "
+            "use skill-deps for dependency/reverse-dependency validation"
+        )
+    source_id = locator.get("source")
+    source = catalog.sources.get(source_id) or {}
+    source_url = source.get("url")
+    if not source_url:
+        raise UpdateError(f"relation {relation.get('id')!r}: source URL is missing")
+
+    work = Path(tempfile.mkdtemp(prefix=f"skill-source-{skill}-"))
     repo = work / "repo"
     run(["git", "clone", "--quiet", "--no-checkout", source_url, str(repo)])
+    target_ref = normalize_ref(
+        ref_override or locator.get("ref") or source.get("defaultRef") or "origin/HEAD",
+        override=bool(ref_override),
+    )
+    target_commit = run(["git", "rev-parse", target_ref], cwd=repo)
 
-    source_ref = ref_override or entry.get("sourceRef") or "origin/HEAD"
-    if source_ref.startswith("refs/heads/"):
-        source_ref = "origin/" + source_ref.split("/", 2)[-1]
-    if ref_override and not re.fullmatch(r"[0-9a-f]{7,40}", source_ref) and not source_ref.startswith("origin/"):
-        source_ref = "origin/" + source_ref
-    target_commit = run(["git", "rev-parse", source_ref], cwd=repo)
-
-    base_commit = entry.get("sourceCommit") or ""
+    lock = load_lock()
+    relation_state = (
+        ((lock.get("skills") or {}).get(skill) or {}).get("relations") or {}
+    ).get(relation.get("id")) or {}
+    fingerprint = relation_fingerprint(catalog, relation, effective_ref=target_ref)
+    scope_changed = bool(
+        relation_state and relation_state.get("relationFingerprint") != fingerprint
+    )
+    base_commit = ""
+    if relation_state and not scope_changed:
+        base_commit = relation_state.get("lastReviewedCommit") or ""
+    legacy = legacy_entry(catalog, skill)
+    if not relation_state and relation.get("legacy"):
+        base_commit = legacy.get("sourceCommit") or ""
     if base_commit:
-        proc = subprocess.run(["git", "cat-file", "-e", f"{base_commit}^{{commit}}"], cwd=str(repo))
-        if proc.returncode != 0:
-            run(["git", "fetch", "--quiet", "origin", base_commit], cwd=repo)
+        ensure_commit(repo, base_commit)
 
-    preferred_path = entry.get("skillPath") or f"skills/{skill}/SKILL.md"
-    theirs_path, _ = discover_skill_path(repo, target_commit, skill, preferred_path)
-    theirs_dir = work / "theirs"
-    export_skill_dir(repo, target_commit, theirs_path, theirs_dir)
-    theirs_hash = folder_hash(theirs_dir)
+    preferred_path = str(locator.get("path") or "")
+    allow_discovery = bool(relation.get("legacy"))
+    target_path = resolved_source_path(
+        repo,
+        target_commit,
+        skill,
+        preferred_path,
+        allow_discovery=allow_discovery,
+    )
+    target_dir = work / "target"
+    export_directory(repo, target_commit, target_path, target_dir)
 
-    base_dir = None
+    base_dir: Path | None = None
     base_path = ""
-    base_hash = ""
     if base_commit:
-        base_path, _ = discover_skill_path(repo, base_commit, skill, preferred_path)
+        base_path = resolved_source_path(
+            repo,
+            base_commit,
+            skill,
+            preferred_path,
+            allow_discovery=allow_discovery,
+        )
         base_dir = work / "base"
-        export_skill_dir(repo, base_commit, base_path, base_dir)
-        base_hash = folder_hash(base_dir)
+        export_directory(repo, base_commit, base_path, base_dir)
 
-    current_hash = folder_hash(vendored)
-    locked_hash = entry.get("skillFolderHash") or ""
-    if base_dir:
-        local_patch = current_hash != base_hash
-        upstream_changed = target_commit != base_commit or theirs_path != base_path or theirs_hash != base_hash
-    else:
-        local_patch = bool(locked_hash and current_hash != locked_hash)
-        upstream_changed = not locked_hash or theirs_hash != locked_hash or theirs_path != preferred_path
-
+    all_changes = directory_diff(base_dir, target_dir)
+    relevant_changes = scoped_changes(all_changes, relation.get("watch"))
+    source_advanced = not base_commit or target_commit != base_commit or target_path != base_path
     return {
-        "lock": lock,
-        "entry": entry,
-        "manifest": manifest,
+        "kind": "source-review",
         "work": work,
-        "repo": repo,
-        "skill": skill,
+        "relation": relation,
+        "relationId": relation.get("id"),
+        "relationType": relation.get("type"),
+        "sourceId": source_id,
         "sourceUrl": source_url,
-        "sourceRef": source_ref,
-        "targetCommit": target_commit,
+        "targetRef": target_ref,
         "baseCommit": base_commit,
+        "targetCommit": target_commit,
         "basePath": base_path,
-        "theirsPath": theirs_path,
-        "vendored": vendored,
-        "vendoredRel": vendored_rel,
-        "baseDir": base_dir,
-        "theirsDir": theirs_dir,
-        "baseHash": base_hash,
-        "theirsHash": theirs_hash,
-        "currentHash": current_hash,
-        "lockedHash": locked_hash,
-        "localPatch": local_patch,
-        "upstreamChanged": upstream_changed,
+        "targetPath": target_path,
+        "sourceAdvanced": source_advanced,
+        "scopeChanged": scope_changed,
+        "relationFingerprint": fingerprint,
+        "reviewRequired": source_advanced or scope_changed,
+        "relevantChanges": relevant_changes,
+        "allChangeCount": len(all_changes),
+        "watch": relation.get("watch") or {},
+        "legacy": bool(relation.get("legacy")),
+        "action": "selective-adopt" if relation.get("type") == "content-source" else "review",
     }
 
 
-def print_report(ctx: dict) -> None:
-    print(f"skill: {ctx['skill']}")
-    print(f"source: {ctx['sourceUrl']}")
-    print(f"targetRef: {ctx['sourceRef']}")
-    print(f"baseCommit: {ctx['baseCommit'] or '(none)'}")
-    print(f"targetCommit: {ctx['targetCommit']}")
-    print(f"vendoredPath: {ctx['vendoredRel']}")
-    print(f"baseSkillPath: {ctx['basePath'] or '(none)'}")
-    print(f"targetSkillPath: {ctx['theirsPath']}")
-    print(f"currentHash: {ctx['currentHash']}")
-    print(f"baseHash: {ctx['baseHash'] or '(none)'}")
-    print(f"upstreamHash: {ctx['theirsHash']}")
-    print(f"localPatch: {'yes' if ctx['localPatch'] else 'no'}")
-    print(f"upstreamChanged: {'yes' if ctx['upstreamChanged'] else 'no'}")
-    if ctx["baseDir"] and ctx["upstreamChanged"]:
-        print("upstreamDiffSummary:")
-        for line in summarize_dir_diff(ctx["baseDir"], ctx["theirsDir"]):
-            print(f"  {line}")
-    if ctx["baseDir"] and ctx["localPatch"]:
-        print("localPatchSummary:")
-        for line in summarize_dir_diff(ctx["baseDir"], ctx["vendored"]):
-            print(f"  {line}")
+def build_mirror_context(catalog, skill: str, ref_override: str | None) -> dict[str, Any]:
+    record = catalog.skills[skill]
+    locator = record.mirror or {}
+    source_id = locator.get("source")
+    source = catalog.sources.get(source_id) or {}
+    source_url = source.get("url")
+    if not source_url:
+        raise UpdateError(f"mirror {skill!r}: source URL is missing")
 
-
-def apply_update(ctx: dict) -> None:
-    if not ctx["upstreamChanged"]:
-        print("no upstream changes to apply")
-        return
-
-    vendored = ctx["vendored"]
-    final_hash = ""
-    if not ctx["localPatch"]:
-        replace_dir(ctx["theirsDir"], vendored)
-        final_hash = folder_hash(vendored)
-        print(f"replaced {ctx['vendoredRel']} with upstream {ctx['targetCommit']}")
-    else:
-        if not ctx["baseDir"]:
-            raise UpdateError(
-                "local vendored edits exist but lock has no sourceCommit/base tree; "
-                "cannot do a safe three-way merge. Ask an agent/human to reconcile."
-            )
-        merge_repo, clean = init_merge_repo(ctx["baseDir"], vendored, ctx["theirsDir"])
-        if not clean:
-            print(f"merge conflict. Resolve manually in: {merge_repo}")
-            print("After resolving, copy that tree into the vendored path and update thirdparty-lock.json.")
-            raise SystemExit(2)
-        copy_dir_contents(merge_repo, vendored)
-        final_hash = folder_hash(vendored)
-        shutil.rmtree(merge_repo, ignore_errors=True)
-        print(f"merged upstream {ctx['targetCommit']} into local patched {ctx['vendoredRel']}")
-
-    update_lock_entry(
-        ctx["lock"],
-        ctx["skill"],
-        ctx["entry"],
-        source_url=ctx["sourceUrl"],
-        source_ref=ctx["sourceRef"],
-        source_commit=ctx["targetCommit"],
-        skill_path=ctx["theirsPath"],
-        upstream_hash=ctx["theirsHash"],
-        vendored_hash=final_hash,
+    work = Path(tempfile.mkdtemp(prefix=f"skill-mirror-{skill}-"))
+    repo = work / "repo"
+    run(["git", "clone", "--quiet", "--no-checkout", source_url, str(repo)])
+    target_ref = normalize_ref(
+        ref_override or locator.get("ref") or source.get("defaultRef") or "origin/HEAD",
+        override=bool(ref_override),
     )
-    LOCK_PATH.write_text(json.dumps(ctx["lock"], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print("updated thirdparty-lock.json")
+    target_commit = run(["git", "rev-parse", target_ref], cwd=repo)
+    source_path = str(locator.get("path") or "")
+    if not git_object_exists(repo, target_commit, source_path):
+        raise UpdateError(f"mirror source path missing: {target_commit}:{source_path}")
+    target_dir = work / "target"
+    export_directory(repo, target_commit, source_path, target_dir)
+    skill_md = target_dir / "SKILL.md"
+    if not skill_md.exists() or skill_md.is_symlink() or frontmatter_name(skill_md) != skill:
+        raise UpdateError(
+            f"mirror source {source_path!r} does not contain SKILL.md with name {skill!r}"
+        )
+
+    lock = load_lock()
+    mirror_state = ((lock.get("skills") or {}).get(skill) or {}).get("mirror") or {}
+    base_commit = mirror_state.get("resolvedCommit") or ""
+    if not base_commit:
+        legacy = legacy_entry(catalog, skill)
+        if legacy.get("source") == source_id:
+            base_commit = legacy.get("sourceCommit") or ""
+    if base_commit:
+        ensure_commit(repo, base_commit)
+    expected_local_hash = mirror_state.get("materializedHash") or ""
+    current_hash = folder_hash(record.path)
+    target_hash = folder_hash(target_dir)
+    if expected_local_hash:
+        drift = current_hash != expected_local_hash
+    elif base_commit:
+        base_path = mirror_state.get("sourcePath") or source_path
+        if git_object_exists(repo, base_commit, base_path):
+            base_dir = work / "base"
+            export_directory(repo, base_commit, base_path, base_dir)
+            drift = current_hash != folder_hash(base_dir)
+        else:
+            drift = current_hash != target_hash
+    else:
+        drift = current_hash != target_hash
+    update_available = not base_commit or target_commit != base_commit or target_hash != current_hash
+    return {
+        "kind": "mirror",
+        "work": work,
+        "targetDir": target_dir,
+        "sourceId": source_id,
+        "sourceUrl": source_url,
+        "targetRef": target_ref,
+        "baseCommit": base_commit,
+        "targetCommit": target_commit,
+        "targetPath": source_path,
+        "currentHash": current_hash,
+        "upstreamHash": target_hash,
+        "drift": drift,
+        "updateAvailable": update_available,
+        "action": "replace",
+    }
+
+
+def serializable_context(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in context.items()
+        if key not in {"work", "targetDir", "relation"}
+    }
+
+
+def build_report(catalog, skill: str, relation_id: str | None, ref_override: str | None):
+    if skill not in catalog.skills:
+        raise UpdateError(f"unknown skill: {skill}")
+    record = catalog.skills[skill]
+    contexts: list[dict[str, Any]] = []
+    if record.ownership == "mirror":
+        if relation_id and relation_id != "mirror":
+            raise UpdateError(f"mirror skill {skill!r} only has relation id 'mirror'")
+        contexts.append(build_mirror_context(catalog, skill, ref_override))
+    else:
+        source_relations = record.source_relations
+        if relation_id:
+            source_relations = [
+                relation for relation in source_relations if relation.get("id") == relation_id
+            ]
+            if not source_relations:
+                raise UpdateError(f"skill {skill!r} has no source relation {relation_id!r}")
+        for relation in source_relations:
+            contexts.append(build_source_context(catalog, skill, relation, ref_override))
+    dependencies = [
+        {
+            "id": relation.get("id"),
+            "type": relation.get("type"),
+            "skill": relation.get("skill"),
+            "tool": relation.get("tool"),
+            "updatePolicy": relation.get("updatePolicy"),
+            "verify": relation.get("verify") or [],
+            "action": "update-then-validate",
+        }
+        for relation in record.relations
+        if relation.get("type") in {"skill-dependency", "tool-dependency"}
+    ]
+    report = {
+        "schemaVersion": 1,
+        "skill": skill,
+        "path": record.relative_path,
+        "ownership": record.ownership,
+        "ownershipExplicit": record.ownership_explicit,
+        "legacySourceRecord": record.legacy_source,
+        "policy": "replace" if record.ownership == "mirror" else "local-authoritative",
+        "sources": [serializable_context(context) for context in contexts],
+        "dependencies": dependencies,
+    }
+    return report, contexts
+
+
+def path_is_dirty(path: Path) -> tuple[bool, str]:
+    try:
+        relative = path.relative_to(REPO_ROOT).as_posix()
+    except ValueError as error:
+        raise UpdateError(f"mirror path escapes repository: {path}") from error
+    process = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all", "--ignored=matching", "--", relative],
+        cwd=str(REPO_ROOT),
+        text=True,
+        capture_output=True,
+    )
+    if process.returncode != 0:
+        detail = (process.stderr or process.stdout or "").strip()
+        raise UpdateError(f"cannot inspect mirror worktree state: {detail}")
+    return bool(process.stdout.strip()), process.stdout.strip()
+
+
+@contextmanager
+def replaced_directory(source: Path, destination: Path):
+    """Swap a directory and roll it back if lock commit/verification fails."""
+    staging_root = Path(
+        tempfile.mkdtemp(prefix=f".{destination.name}.replace-", dir=str(destination.parent))
+    )
+    staged = staging_root / destination.name
+    backup = staging_root / (destination.name + ".backup")
+    shutil.copytree(source, staged, symlinks=True)
+    moved_old = False
+    preserve_staging = False
+    try:
+        if destination.exists() or destination.is_symlink():
+            destination.rename(backup)
+            moved_old = True
+        staged.rename(destination)
+        try:
+            yield
+        except BaseException:
+            try:
+                if destination.is_dir() and not destination.is_symlink():
+                    shutil.rmtree(destination)
+                elif destination.exists() or destination.is_symlink():
+                    destination.unlink()
+                if moved_old and backup.exists():
+                    backup.rename(destination)
+            except BaseException as rollback_error:
+                preserve_staging = True
+                raise UpdateError(
+                    f"mirror rollback failed; original backup preserved at {backup}: {rollback_error}"
+                ) from rollback_error
+            raise
+        if moved_old:
+            shutil.rmtree(backup, ignore_errors=True)
+    finally:
+        if not preserve_staging:
+            shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def apply_mirror(catalog, skill: str, report: dict[str, Any], contexts: list[dict[str, Any]]):
+    record = catalog.skills[skill]
+    if record.ownership != "mirror":
+        raise UpdateError(
+            f"owned skill {skill!r} is local-authoritative; --apply is forbidden. "
+            "Review source deltas, selectively edit the owned skill, then use --record-review."
+        )
+    if not record.ownership_explicit:
+        raise UpdateError(f"mirror ownership for {skill!r} must be explicit in skill-manifest.json")
+    context = contexts[0]
+    needs_replacement = context["currentHash"] != context["upstreamHash"]
+    if needs_replacement:
+        dirty, detail = path_is_dirty(record.path)
+        if dirty:
+            raise UpdateError(
+                f"refusing to replace dirty mirror path {record.relative_path}:\n{detail}"
+            )
+    lock = load_lock()
+    state = lock.setdefault("skills", {}).setdefault(skill, {})
+    state.clear()
+    state["mirror"] = {
+        "resolvedCommit": context["targetCommit"],
+        "sourcePath": context["targetPath"],
+        "upstreamHash": context["upstreamHash"],
+        "materializedHash": context["upstreamHash"],
+        "syncedAt": now(),
+    }
+    validate_prospective_lock(catalog, lock)
+
+    def verify_and_commit_lock() -> None:
+        materialized_hash = folder_hash(record.path)
+        if materialized_hash != context["upstreamHash"]:
+            raise UpdateError("mirror replacement did not produce the upstream directory hash")
+        write_json_atomic(LOCK_PATH, lock)
+
+    if needs_replacement:
+        with replaced_directory(context["targetDir"], record.path):
+            verify_and_commit_lock()
+    else:
+        verify_and_commit_lock()
+    report["applied"] = True
+    report["resolvedCommit"] = context["targetCommit"]
+    return report
+
+
+def load_review_payload(path: str) -> dict[str, Any]:
+    try:
+        text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+        value = json.loads(text)
+    except (OSError, json.JSONDecodeError) as error:
+        raise UpdateError(f"invalid review payload: {error}") from error
+    if not isinstance(value, dict):
+        raise UpdateError("review payload must be a JSON object")
+    unknown = set(value) - {"toCommit", "accepted", "skipped", "note"}
+    if unknown:
+        raise UpdateError(f"review payload has unknown fields: {sorted(unknown)}")
+    if not isinstance(value.get("toCommit"), str) or not value.get("toCommit"):
+        raise UpdateError("review payload requires explicit string field 'toCommit'")
+    for key in ("accepted", "skipped"):
+        if not isinstance(value.get(key), list):
+            raise UpdateError(f"review payload requires array field {key!r}")
+    if value.get("note") is not None and not isinstance(value.get("note"), str):
+        raise UpdateError("review payload note must be a string")
+    return value
+
+
+def safe_receipt_path(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and not value.startswith("/")
+        and ".." not in PurePosixPath(value).parts
+    )
+
+
+def validate_review_coverage(payload: dict[str, Any], context: dict[str, Any]) -> None:
+    expected = {change["path"] for change in context["relevantChanges"]}
+    decided: dict[str, str] = {}
+    for decision_type in ("accepted", "skipped"):
+        for index, decision in enumerate(payload[decision_type]):
+            label = f"{decision_type}[{index}]"
+            if not isinstance(decision, dict):
+                raise UpdateError(f"review payload {label} must be an object")
+            allowed = {"upstreamPaths", "localPaths", "note"} if decision_type == "accepted" else {"upstreamPaths", "reason"}
+            unknown = set(decision) - allowed
+            if unknown:
+                raise UpdateError(f"review payload {label} has unknown fields: {sorted(unknown)}")
+            upstream_paths = decision.get("upstreamPaths")
+            if not isinstance(upstream_paths, list) or not upstream_paths:
+                raise UpdateError(f"review payload {label} requires non-empty upstreamPaths")
+            if any(not safe_receipt_path(path) for path in upstream_paths):
+                raise UpdateError(f"review payload {label}.upstreamPaths contains an unsafe path")
+            if decision_type == "accepted":
+                local_paths = decision.get("localPaths")
+                if not isinstance(local_paths, list) or not local_paths:
+                    raise UpdateError(f"review payload {label} requires non-empty localPaths")
+                if any(not safe_receipt_path(path) for path in local_paths):
+                    raise UpdateError(f"review payload {label}.localPaths contains an unsafe path")
+                if len(local_paths) != len(set(local_paths)):
+                    raise UpdateError(f"review payload {label}.localPaths must be unique")
+                if not isinstance(decision.get("note"), str) or not decision.get("note"):
+                    raise UpdateError(f"review payload {label} requires a note")
+            elif not isinstance(decision.get("reason"), str) or not decision.get("reason"):
+                raise UpdateError(f"review payload {label} requires a reason")
+            for upstream_path in upstream_paths:
+                if upstream_path in decided:
+                    raise UpdateError(
+                        f"review payload decides {upstream_path!r} more than once "
+                        f"({decided[upstream_path]} and {label})"
+                    )
+                decided[upstream_path] = label
+    decided_paths = set(decided)
+    if decided_paths != expected:
+        missing = sorted(expected - decided_paths)
+        extra = sorted(decided_paths - expected)
+        raise UpdateError(
+            "review receipt must decide every relevant changed path exactly once; "
+            f"missing={missing}, outside-scope={extra}"
+        )
+
+
+def record_review(
+    catalog,
+    skill: str,
+    report: dict[str, Any],
+    contexts: list[dict[str, Any]],
+    payload_path: str,
+):
+    record = catalog.skills[skill]
+    if record.ownership != "owned":
+        raise UpdateError("--record-review is only valid for owned skills")
+    if len(contexts) != 1:
+        raise UpdateError("--record-review requires --relation when a skill has multiple source relations")
+    context = contexts[0]
+    payload = load_review_payload(payload_path)
+    validate_review_coverage(payload, context)
+    requested_commit = payload["toCommit"]
+    if requested_commit != context["targetCommit"]:
+        raise UpdateError(
+            f"review payload toCommit {requested_commit!r} does not match checked target "
+            f"{context['targetCommit']!r}"
+        )
+    reviewed_at = now()
+    accepted = [
+        {
+            "upstreamPaths": list(decision["upstreamPaths"]),
+            "localPaths": list(decision["localPaths"]),
+            "note": decision["note"],
+        }
+        for decision in payload["accepted"]
+    ]
+    skipped = [
+        {
+            "upstreamPaths": list(decision["upstreamPaths"]),
+            "reason": decision["reason"],
+        }
+        for decision in payload["skipped"]
+    ]
+    review = {
+        "fromCommit": context["baseCommit"] or None,
+        "toCommit": context["targetCommit"],
+        "relationFingerprint": context["relationFingerprint"],
+        "accepted": accepted,
+        "skipped": skipped,
+        "reviewedAt": reviewed_at,
+    }
+    if payload.get("note"):
+        review["note"] = str(payload["note"])
+    lock = load_lock()
+    skill_state = lock.setdefault("skills", {}).setdefault(skill, {})
+    relation_states = skill_state.setdefault("relations", {})
+    relation_state = relation_states.setdefault(context["relationId"], {"reviews": []})
+    relation_state.setdefault("reviews", []).append(review)
+    relation_state["relationFingerprint"] = context["relationFingerprint"]
+    relation_state["sourceId"] = context["sourceId"]
+    relation_state["sourcePath"] = context["targetPath"]
+    relation_state["sourceRef"] = context["targetRef"]
+    relation_state["lastReviewedCommit"] = context["targetCommit"]
+    relation_state["reviewedAt"] = reviewed_at
+    validate_prospective_lock(catalog, lock)
+    write_json_atomic(LOCK_PATH, lock)
+    report["reviewRecorded"] = review
+    return report
+
+
+def print_text(report: dict[str, Any]) -> None:
+    print(f"skill: {report['skill']}")
+    print(f"ownership: {report['ownership']}")
+    print(f"ownershipExplicit: {'yes' if report['ownershipExplicit'] else 'no'}")
+    print(f"policy: {report['policy']}")
+    if report["legacySourceRecord"] and not report["ownershipExplicit"]:
+        print("migration: legacy source record; classify this skill before any replace")
+    if not report["sources"]:
+        print("sources: none")
+    for source in report["sources"]:
+        print(f"relation: {source.get('relationId', 'mirror')}")
+        print(f"  action: {source['action']}")
+        print(f"  source: {source['sourceUrl']}")
+        print(f"  targetRef: {source['targetRef']}")
+        print(f"  baseCommit: {source.get('baseCommit') or '(none)'}")
+        print(f"  targetCommit: {source['targetCommit']}")
+        print(f"  targetPath: {source['targetPath']}")
+        if source["kind"] == "mirror":
+            print(f"  updateAvailable: {'yes' if source['updateAvailable'] else 'no'}")
+            print(f"  mirrorDrift: {'yes' if source['drift'] else 'no'}")
+        else:
+            print(f"  reviewRequired: {'yes' if source['reviewRequired'] else 'no'}")
+            print(f"  scopeChanged: {'yes' if source['scopeChanged'] else 'no'}")
+            print(f"  relevantChanges: {len(source['relevantChanges'])}")
+            for change in source["relevantChanges"][:80]:
+                print(f"    - {change['status']} {change['path']}")
+    if report["dependencies"]:
+        print("dependencies:")
+        for dependency in report["dependencies"]:
+            target = dependency.get("skill") or (dependency.get("tool") or {}).get("package") or (dependency.get("tool") or {}).get("name")
+            print(f"  - {dependency['type']} {target}: update then validate; never merge")
+    if report.get("applied"):
+        print(f"replaced mirror at {report['resolvedCommit']}")
+        print("updated skill-lock.json")
+    if report.get("reviewRecorded"):
+        print(f"recorded source review through {report['reviewRecorded']['toCommit']}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("skill")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check", action="store_true", help="report mirror drift or owned source-review debt")
+    mode.add_argument("--apply", action="store_true", help="replace an explicit, clean mirror skill only")
+    mode.add_argument(
+        "--record-review",
+        metavar="JSON",
+        help="record an owned source review from a JSON file, or '-' for stdin; never edits skill content",
+    )
+    parser.add_argument("--relation", help="source relation id; required to record one of multiple sources")
+    parser.add_argument("--ref", help="source ref to inspect instead of the declared/default ref")
+    parser.add_argument("--format", choices=["text", "json"], default="text")
+    parser.add_argument("--keep-workdir", action="store_true", help="keep temporary source checkouts")
+    return parser.parse_args()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check/apply guarded updates for vendored third-party skills")
-    parser.add_argument("skill")
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--check", action="store_true", help="report upstream/local changes without mutating")
-    mode.add_argument("--apply", action="store_true", help="apply a safe update or stop on ambiguity/conflict")
-    parser.add_argument("--ref", help="upstream ref to use instead of lock sourceRef/default branch")
-    parser.add_argument("--keep-workdir", action="store_true", help="do not delete temporary checkout after check/apply")
-    args = parser.parse_args()
-
-    ctx = None
+    args = parse_args()
+    contexts: list[dict[str, Any]] = []
     try:
-        ctx = build_context(args.skill, args.ref)
-        print_report(ctx)
+        catalog = load_catalog(REPO_ROOT)
+        record = catalog.skills.get(args.skill)
+        if record is None:
+            raise UpdateError(f"unknown skill: {args.skill}")
+        if args.apply and record.ownership != "mirror":
+            raise UpdateError(
+                f"owned skill {args.skill!r} is local-authoritative; --apply is forbidden. "
+                "Review source deltas, selectively edit the owned skill, then use --record-review."
+            )
+        if args.record_review and record.ownership != "owned":
+            raise UpdateError("--record-review is only valid for owned skills")
+        report, contexts = build_report(catalog, args.skill, args.relation, args.ref)
         if args.apply:
-            apply_update(ctx)
-            print("next: ./scripts/skill-deps check && ./scripts/skill-sync --check")
+            report = apply_mirror(catalog, args.skill, report, contexts)
+        elif args.record_review:
+            report = record_review(
+                catalog,
+                args.skill,
+                report,
+                contexts,
+                args.record_review,
+            )
+        if args.keep_workdir:
+            report["workdirs"] = [str(context["work"]) for context in contexts]
+        if args.format == "json":
+            print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        else:
+            print_text(report)
+            if args.apply:
+                print("next: ./scripts/skill-deps check && ./scripts/skill-sync --check")
         return 0
-    except UpdateError as err:
-        print(f"error: {err}", file=sys.stderr)
+    except (UpdateError, ModelError) as error:
+        if args.format == "json":
+            print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        else:
+            print(f"error: {error}", file=sys.stderr)
         return 1
     finally:
-        if ctx and not args.keep_workdir:
-            shutil.rmtree(ctx["work"], ignore_errors=True)
-        elif ctx:
-            print(f"kept workdir: {ctx['work']}")
+        if not args.keep_workdir:
+            for context in contexts:
+                shutil.rmtree(context.get("work"), ignore_errors=True)
+        elif contexts and args.format != "json":
+            for context in contexts:
+                print(f"kept workdir: {context['work']}")
 
 
 if __name__ == "__main__":
