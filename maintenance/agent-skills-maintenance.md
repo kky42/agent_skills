@@ -40,8 +40,8 @@ Core evaluation is anchored in `pievo/loops/agent-skills-maintenance/assets/eval
 Architecture and ownership migration evidence from 2026-07-10:
 
 - Added the mirror/owned model, typed relations, review receipts, schemas, normalized model loader, safe mirror replacement, real runtime-link checks, and dependency verification.
-- All **32 active skills** now have explicit ownership: **28 mirrors** and **4 owned**. Legacy v1 records are empty.
-- Deleted `grill-me`, `browseruse`, `pi-agent-e2e`, `pi-soul`, and `pi-extension-dev` by user decision and removed their runtime links.
+- All **31 active skills** now have explicit ownership: **28 mirrors** and **3 owned**. Legacy v1 records are empty.
+- Deleted `grill-me`, `browseruse`, `pi-agent-e2e`, `pi-soul`, `pi-extension-dev`, and `agent-prompt-engineering` by user decision and removed their runtime links.
 - All retained Matt Pocock skills, Pievo, Researcher, Playwright CLI, and the selected OpenCLI skills were materialized and locked from their declared Git sources. See `maintenance/skill-inventory.md`.
 - All four OpenCLI-sourced skills are exact mirrors. Both Kaggle owned-source reviews are current; no explicit source-review debt remains.
 - The global `@playwright/cli` package was updated with the Playwright mirror; strict dependency/tool verification passes with no unchecked edges.

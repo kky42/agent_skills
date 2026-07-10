@@ -39,10 +39,6 @@
     }
   },
   "skills": {
-    "agent-prompt-engineering": {
-      "path": "skills/reasoning/agent-prompt-engineering",
-      "ownership": "owned"
-    },
     "ask-matt": {
       "path": "skills/thirdparty/ask-matt",
       "ownership": "mirror",

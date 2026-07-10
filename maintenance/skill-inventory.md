@@ -7,9 +7,9 @@ Current explicit ownership after the 2026-07-10 migration.
 | Type | Count |
 |---|---:|
 | Mirror | 28 |
-| Owned | 4 |
-| Active | 32 |
-| Deleted in this migration | 5 |
+| Owned | 3 |
+| Active | 31 |
+| Deleted in this migration | 6 |
 
 ## Mirror by source
 
@@ -76,9 +76,8 @@ The previous local customization and obsolete reference directory were discarded
 
 ## Owned by source
 
-### Local-authoritative, no external content source — 3
+### Local-authoritative, no external content source — 2
 
-- `agent-prompt-engineering`
 - `chatgpt`
   - skill dependency: `playwright-cli`
   - tool dependencies: `@playwright/cli`, local ChatGPT helper scripts
@@ -101,10 +100,11 @@ Both Kaggle relations were selectively reviewed and recorded: NVIDIA through `9a
 - `pi-agent-e2e` — removed by explicit user decision; its fresh-process guidance is no longer a separate skill.
 - `pi-soul` — removed by explicit user decision.
 - `pi-extension-dev` — removed by explicit user decision.
+- `agent-prompt-engineering` — removed by explicit user decision.
 
 ## Compatibility state
 
-- All 32 active skills have explicit ownership.
+- All 31 active skills have explicit ownership.
 - All 28 mirrors have resolved mirror lock state.
 - Legacy v1 source and lock files are empty.
 - Strict skill/tool dependency verification passes.
