@@ -57,7 +57,8 @@ CLI-only operations:
 Script-backed operations, only where the Kaggle CLI is insufficient:
 
 - Local routine cache/search: `./refs/scripts/cache.md`
-- Competition page sections: `./refs/scripts/comp_page.md`
+- Competition page aggregation, raw metadata, and stable intake snapshots:
+  `./refs/scripts/comp_page.md`
 - Notebook search snapshots: `./refs/scripts/nb_list.md`
 - Notebook version artifact download: `./refs/scripts/nb_download.md`
 - Discussion topic list/filter with preserved raw metadata:

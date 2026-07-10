@@ -11,19 +11,20 @@ Competition topics:
 ```bash
 kaggle competitions topics list SLUG --page 1 --csv
 kaggle competitions topics show SLUG TOPIC_ID
-kaggle competitions topic-messages SLUG TOPIC_ID --sort-by top --page-size -1 --csv
 ```
 
 CLI trade-offs for reading a single thread:
 
-- `topics show` renders a nested reply tree with author names, but **truncates**
-  long comment bodies to a preview.
-- `topic-messages --page-size -1 --csv` returns **full untruncated** bodies and
-  votes for every message (replies included), but the rows are **flat** (no
-  reply/parent column) and the `authorName` column comes back empty.
-- `./scripts/disc_get.py` returns full bodies **and** the reply nesting **and**
-  author names in one artifact (authenticated discussions API). Prefer it when
-  the task is to fetch/archive a discussion rather than just glance at it.
+- Default `topics show` renders a nested reply tree with author names, but may
+  truncate long comments.
+- `topics show -q --format json` returns full comment bodies but flattens the
+  tree, may omit some authors, and does not include the opening-post body.
+- `./scripts/disc_get.py` returns the opening post, full bodies, reply nesting,
+  and available author names in one artifact. Prefer it for archival work.
+
+`topic-messages` is a deprecated compatibility alias; the official docs say it
+will be removed. Do not build new workflows around it. When writing JSON from paginated CLI commands, use
+`-q` so a next-page notice is not appended after the JSON document.
 
 General forum topics:
 

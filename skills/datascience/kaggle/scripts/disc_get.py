@@ -5,9 +5,10 @@ comment tree with author identities, votes, and dates.
 Primary path uses Kaggle's authenticated discussions API
 (``discussions.DiscussionApiService`` ``GetTopic`` + ``ListComments``), which
 returns every comment, the reply nesting, and author names in one place. It
-needs Kaggle credentials (``~/.kaggle/kaggle.json`` or ``KAGGLE_USERNAME`` /
-``KAGGLE_KEY`` / ``KAGGLE_API_TOKEN``). Without credentials it degrades to an
-unauthenticated page-title + visible-text scrape so it still returns something.
+needs a Kaggle API token (``KAGGLE_API_TOKEN`` or ``~/.kaggle/access_token``)
+or legacy credentials (``~/.kaggle/kaggle.json`` or ``KAGGLE_USERNAME`` /
+``KAGGLE_KEY``). Without supported credentials it degrades to an unauthenticated
+page-title + visible-text scrape so it still returns something.
 """
 
 from __future__ import annotations
@@ -117,17 +118,26 @@ def as_int(value: Any) -> int | None:
 
 
 def load_credentials() -> tuple[str, str, str | None] | None:
-    """Return (scheme, secret_a, secret_b). scheme is 'basic' (user, key) or
-    'bearer' (token, None). None when no credentials are available."""
+    """Return (scheme, secret_a, secret_b) for this direct HTTP client."""
+    token = os.environ.get("KAGGLE_API_TOKEN")
+    if token:
+        return ("bearer", token, None)
+
+    cfg_dir = Path(os.environ.get("KAGGLE_CONFIG_DIR") or os.path.expanduser("~/.kaggle"))
+    access_token_path = cfg_dir / "access_token"
+    try:
+        file_token = access_token_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        file_token = ""
+    if file_token:
+        return ("bearer", file_token, None)
+
     user = os.environ.get("KAGGLE_USERNAME")
     key = os.environ.get("KAGGLE_KEY")
     if user and key:
         return ("basic", user, key)
-    token = os.environ.get("KAGGLE_API_TOKEN")
-    if token:
-        return ("bearer", token, None)
-    cfg_dir = os.environ.get("KAGGLE_CONFIG_DIR") or os.path.expanduser("~/.kaggle")
-    path = Path(cfg_dir) / "kaggle.json"
+
+    path = cfg_dir / "kaggle.json"
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))

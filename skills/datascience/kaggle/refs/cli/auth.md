@@ -6,7 +6,7 @@ Use the Kaggle CLI directly. Start each new environment with a short check.
 command -v kaggle
 kaggle --version
 kaggle config view
-kaggle competitions list --page-size 5
+kaggle competitions list --page-size 20 --format json
 ```
 
 If Kaggle is installed with uv, keep the CLI on PATH:
@@ -32,35 +32,36 @@ explicit dependency:
 uv run --with kaggle python script.py
 ```
 
-Accept the standard Kaggle auth sources before declaring auth broken:
+Accept the current Kaggle authentication methods before declaring auth broken:
 
-- `~/.kaggle/kaggle.json`;
-- `$KAGGLE_CONFIG_DIR/kaggle.json`;
-- `KAGGLE_USERNAME` + `KAGGLE_KEY`;
-- a repo/user-specific `KAGGLE_API_TOKEN` wrapper if that project documents one.
+- OAuth via `kaggle auth login` (`~/.kaggle/credentials.json`);
+- API token via `KAGGLE_API_TOKEN` or `~/.kaggle/access_token`;
+- legacy `~/.kaggle/kaggle.json` or `$KAGGLE_CONFIG_DIR/kaggle.json`;
+- legacy `KAGGLE_USERNAME` + `KAGGLE_KEY`.
 
-Do not require `KAGGLE_API_TOKEN` when the normal CLI is already authenticated
-with `kaggle.json`. If credentials are missing, create or place `kaggle.json`
-where the CLI expects it, usually `~/.kaggle/kaggle.json`, or set
-`KAGGLE_CONFIG_DIR`.
+Do not require one method when the CLI is already authenticated by another. Use
+a harmless authenticated read command to verify access. Keep credential files
+private and never print tokens.
 
 `kaggle config view` often prints optional fields such as `path: None`,
 `proxy: None`, or `competition: None`. These are not auth failures. Inspect the
 username/auth fields or run a harmless authenticated command instead of grepping
 for any occurrence of `None`.
 
-Some NVIDIA-derived helpers use Kaggle internal APIs and require a KGAT bearer
-token in `KAGGLE_API_TOKEN`, even when the normal CLI is authenticated. Treat
-that as a helper-specific requirement, not as the general Kaggle auth standard.
-Check for it without printing the secret:
+Some direct-HTTP or NVIDIA-derived helpers require a bearer token even when the
+CLI is authenticated through OAuth or legacy credentials. Treat that as a
+helper-specific limitation. Check for the token without printing it:
 
 ```bash
 : "${KAGGLE_API_TOKEN:?KAGGLE_API_TOKEN is required for this helper}"
 ```
 
-For competition-scoped work, prefer passing `-c SLUG` explicitly. Use
-`kaggle config set competition SLUG` only when a workflow clearly benefits from
-a default.
+For competition-scoped work, prefer passing the competition argument explicitly.
+Set a default only when a workflow clearly benefits from it:
+
+```bash
+kaggle config set -n competition -v SLUG
+```
 
 Record the CLI version, user-visible competition slug, and command used when a
 Kaggle action matters for reproducibility. If a wrapper script checks auth, make

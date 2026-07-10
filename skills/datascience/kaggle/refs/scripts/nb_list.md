@@ -20,7 +20,9 @@ Supported sorts mirror Kaggle CLI: `hotness`, `commentCount`, `dateCreated`,
 
 The script writes `schema_version`, query parameters, command provenance, raw
 CLI output, normalized items, `author_identity`, and optional notebook snapshot
-metadata including latest/best LB score and version count.
+metadata including latest/best LB score and version count. If any underlying
+`kaggle kernels list` query fails, it exits nonzero and does not write a partial
+snapshot.
 
 For broad periodic syncs, prefer fast list-only snapshots across several sorts,
 then run version/source metadata only for new, changed, or high-signal refs.

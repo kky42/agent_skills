@@ -7,9 +7,14 @@ refreshing this skill, especially for helper scripts around writeups, public
 kernel scoring/version archives, discussion/kernel SQLite browsing, dataset
 uploads, and code-competition submission polling.
 
-Merged snapshot:
+Selective provenance:
 
-- Source commit: `5d9f7de9293fe1baf36dca41036f2f39742e9433`
+- Initial vendored baseline: `5d9f7de9293fe1baf36dca41036f2f39742e9433`
+- Last reviewed upstream commit: `9a9333817802fef8a81c3e999bef219edf05e789`
+- Accepted from that delta: submission/evaluation failures now produce a nonzero
+  helper exit; Python 3.9-compatible UTC handling was already present locally.
+- Skipped: upstream eval tasks, repository SPDX-header churn, and removal of the
+  local import-path adaptation required by this namespaced vendoring layout.
 - Vendored helper location: `./scripts/nvidia/`
 - License: MIT, with copyright notice as stated in upstream `LICENSE`:
   `Copyright (c) 2026 nvidia-kaggle maintainers`; see `./scripts/nvidia/LICENSE`
@@ -18,8 +23,8 @@ Merged snapshot:
 
 1. Clone or fetch the upstream repository.
 2. Compare `skills/nvidia-kaggle-skill/` with this local skill.
-3. Prefer merging reusable workflow guidance into `./refs/` and keep
-   competition-specific behavior out of the skill.
+3. Selectively adapt reusable workflow guidance into `./refs/`; never merge the
+   upstream tree or import competition-specific behavior.
 4. Keep NVIDIA-derived executable helpers under `./scripts/nvidia/` unless they
    are rewritten to match the native `.kaggle-skill/cache/` JSON workflow.
 5. Preserve MIT attribution when copying substantial code or docs.

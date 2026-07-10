@@ -12,7 +12,6 @@ kaggle kernels list --competition SLUG --page-size N --sort-by scoreDescending -
 kaggle kernels pull OWNER/KERNEL -p PATH -m
 kaggle kernels pull OWNER/KERNEL/VERSION -p PATH -m
 kaggle kernels output OWNER/KERNEL -p PATH -o
-kaggle kernels output OWNER/KERNEL/VERSION -p PATH -o
 kaggle kernels init -p NOTEBOOK_DIR
 kaggle kernels push -p NOTEBOOK_DIR
 kaggle kernels status OWNER/KERNEL
@@ -47,10 +46,12 @@ general Kaggle default.
 the score value. Cross-check visible score signals in the notebook title, page
 metadata, oEmbed, output logs, or notebook text.
 
-Use `OWNER/KERNEL/VERSION` when a specific notebook version matters. Otherwise
-the CLI uses the latest accessible version. Use `kaggle kernels logs` to capture
-run logs for provenance or failed notebook runs; add `--follow` only while
-actively monitoring a running kernel.
+Use `OWNER/KERNEL/VERSION` with `kernels pull` when a specific source version
+matters; access to historical versions can still fail with `403`. Do not append a
+version to `kernels output`: the current CLI parses but ignores it and downloads
+the latest run output. Use `./scripts/nb_download.py --version ... --output` for
+a versioned artifact workflow. Use `kaggle kernels logs` to capture run logs;
+add `--follow` only while actively monitoring a running kernel.
 
 Top-voted notebooks:
 

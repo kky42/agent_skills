@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch Kaggle competition page sections not exposed by the CLI."""
+"""Aggregate Kaggle competition pages, metadata, raw payloads, and tab status."""
 
 from __future__ import annotations
 
@@ -261,11 +261,10 @@ def overview_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def pages_to_markdown(section_pages: list[dict[str, Any]], with_headers: bool) -> str:
-    """Join page bodies into clean markdown without collapsing whitespace.
+    """Join page bodies while preserving their internal formatting.
 
-    Unlike the flat ``text`` field, this preserves the original page markdown
-    (tables, code fences, lists). For multi-page sections each page body is
-    introduced by a ``## <page name>`` header.
+    Outer whitespace is trimmed. Kaggle content is often Markdown but may contain
+    HTML; multi-page sections receive a generated ``## <page name>`` header.
     """
     parts: list[str] = []
     for page in section_pages:
@@ -288,7 +287,7 @@ def render_md(record: dict[str, Any]) -> str:
             lines.extend([f"Title: {section['title']}", ""])
         if section.get("error"):
             lines.extend([f"Error: {section['error']}", ""])
-        # Prefer the clean page markdown; fall back to the flat text scrape.
+        # Prefer the preserved page body; fall back to the flat text scrape.
         lines.extend([section.get("markdown") or section.get("text") or "", ""])
     return "\n".join(lines).rstrip() + "\n"
 

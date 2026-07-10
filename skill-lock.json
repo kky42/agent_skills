@@ -274,14 +274,23 @@
               "skipped": [],
               "reviewedAt": "2026-07-10T09:54:01.742946Z",
               "note": "Upstream repository advanced, but none of the scoped Pi extension/SDK documentation or examples changed."
+            },
+            {
+              "fromCommit": "bc469b03389135edf5d179ab7718c2085cdfd3a9",
+              "toCommit": "91585d9a3829831b07560901c4b3e9bbe3b4e35a",
+              "relationFingerprint": "sha256:0b296357a09f466b63d3f07c580b831404b3deb6838a09131a5f8485beb16541",
+              "accepted": [],
+              "skipped": [],
+              "reviewedAt": "2026-07-10T14:44:21.704175Z",
+              "note": "The Pi repository advanced to this commit, but none of the scoped extension/SDK documentation or examples changed."
             }
           ],
           "relationFingerprint": "sha256:0b296357a09f466b63d3f07c580b831404b3deb6838a09131a5f8485beb16541",
           "sourceId": "earendil-works/pi-mono",
           "sourcePath": "packages/coding-agent",
           "sourceRef": "origin/main",
-          "lastReviewedCommit": "bc469b03389135edf5d179ab7718c2085cdfd3a9",
-          "reviewedAt": "2026-07-10T09:54:01.742946Z"
+          "lastReviewedCommit": "91585d9a3829831b07560901c4b3e9bbe3b4e35a",
+          "reviewedAt": "2026-07-10T14:44:21.704175Z"
         }
       }
     },
@@ -301,6 +310,169 @@
         "upstreamHash": "sha256:0dba6ceeabec2cb3073bb75b7debe59c2aabed2f00b558bc3712364efb6aa819",
         "materializedHash": "sha256:0dba6ceeabec2cb3073bb75b7debe59c2aabed2f00b558bc3712364efb6aa819",
         "syncedAt": "2026-07-10T09:49:37.723111Z"
+      }
+    },
+    "kaggle": {
+      "relations": {
+        "nvidia-kaggle": {
+          "reviews": [
+            {
+              "fromCommit": null,
+              "toCommit": "9a9333817802fef8a81c3e999bef219edf05e789",
+              "relationFingerprint": "sha256:cbd90e451abbfb73e62596e59bd06458e833cf7758b765d9a38742e7e3f931c0",
+              "accepted": [
+                {
+                  "upstreamPaths": [
+                    "SKILL.md",
+                    "kernel-setup.md",
+                    "kernels.md",
+                    "research-brief.md",
+                    "submission.md",
+                    "writeups.md"
+                  ],
+                  "localPaths": [
+                    "SKILL.md",
+                    "refs/general",
+                    "refs/scripts/nvidia.md",
+                    "refs/nvidia-kaggle.md"
+                  ],
+                  "note": "Established the owned skill lineage from the initial 5d9f7de vendoring baseline while preserving this skill's private-LB, safety, and reusable-methodology boundaries."
+                },
+                {
+                  "upstreamPaths": [
+                    "scripts/constants.py",
+                    "scripts/db_info.py",
+                    "scripts/discussion_db_info.py",
+                    "scripts/discussion_ingest.py",
+                    "scripts/discussion_query.py",
+                    "scripts/discussion_read.py",
+                    "scripts/discussions/__init__.py",
+                    "scripts/discussions/database.py",
+                    "scripts/discussions/discussion_client.py",
+                    "scripts/discussions/models.py",
+                    "scripts/discussions/paths.py",
+                    "scripts/fetch_competition_info.py",
+                    "scripts/fetch_dataset_info.py",
+                    "scripts/fetch_kernel_score.py",
+                    "scripts/fetch_leaderboard_writeups.py",
+                    "scripts/fetch_top_kernel_scores.py",
+                    "scripts/fetch_writeup.py",
+                    "scripts/kernel_archive.py",
+                    "scripts/kernel_db_info.py",
+                    "scripts/kernel_ingest.py",
+                    "scripts/kernel_query.py",
+                    "scripts/kernel_read.py",
+                    "scripts/kernels/__init__.py",
+                    "scripts/kernels/archive.py",
+                    "scripts/kernels/database.py",
+                    "scripts/kernels/kaggle_client.py",
+                    "scripts/kernels/kaggle_search.py",
+                    "scripts/kernels/models.py",
+                    "scripts/kernels/notebook_reader.py",
+                    "scripts/kernels/paths.py",
+                    "scripts/runtime.py",
+                    "scripts/submission_quota.py",
+                    "scripts/submit_kernel.py",
+                    "scripts/upload_dataset.py"
+                  ],
+                  "localPaths": [
+                    "scripts/nvidia",
+                    "refs/scripts/nvidia.md",
+                    "refs/nvidia-kaggle.md"
+                  ],
+                  "note": "Reviewed namespaced helper lineage through 9a933381. Selectively retained local adaptations, accepted Python 3.9 UTC compatibility and the submit/evaluation nonzero-exit fix, and did not copy SPDX-only churn or remove required local import-path adaptations."
+                }
+              ],
+              "skipped": [
+                {
+                  "upstreamPaths": [
+                    "evals/evals.json"
+                  ],
+                  "reason": "Upstream fixed eval tasks include repository-specific and externally mutating scenarios; this repo validates skill behavior through fresh agents instead of vendoring that suite."
+                }
+              ],
+              "reviewedAt": "2026-07-10T14:11:16.899615Z",
+              "note": "Initial v2 NVIDIA Kaggle content-source review. Fresh agents reproduced the submission failure bug before the update and verified the corrected local helper through controlled non-live boundaries."
+            },
+            {
+              "fromCommit": "9a9333817802fef8a81c3e999bef219edf05e789",
+              "toCommit": "9a9333817802fef8a81c3e999bef219edf05e789",
+              "relationFingerprint": "sha256:cbd90e451abbfb73e62596e59bd06458e833cf7758b765d9a38742e7e3f931c0",
+              "accepted": [],
+              "skipped": [],
+              "reviewedAt": "2026-07-10T14:43:44.475714Z",
+              "note": "Post-update verification receipt: fresh agents re-ran the accepted helper workflows and safety boundaries; the source commit is unchanged and has no additional scoped delta."
+            }
+          ],
+          "relationFingerprint": "sha256:cbd90e451abbfb73e62596e59bd06458e833cf7758b765d9a38742e7e3f931c0",
+          "sourceId": "NVIDIA/nvidia-kaggle",
+          "sourcePath": "skills/nvidia-kaggle-skill",
+          "sourceRef": "origin/HEAD",
+          "lastReviewedCommit": "9a9333817802fef8a81c3e999bef219edf05e789",
+          "reviewedAt": "2026-07-10T14:43:44.475714Z"
+        },
+        "kaggle-cli-contract": {
+          "reviews": [
+            {
+              "fromCommit": null,
+              "toCommit": "cadeb92943cd63a0eeb730672b440a0b9b02af30",
+              "relationFingerprint": "sha256:c56f58777d5bdb83102ab78947e5c75f486bb868743c6a4f68b4c697fbc30b08",
+              "accepted": [
+                {
+                  "upstreamPaths": [
+                    "api/kaggle_api_extended.py",
+                    "cli.py"
+                  ],
+                  "localPaths": [
+                    "SKILL.md",
+                    "refs/cli/auth.md",
+                    "refs/cli/discussions.md",
+                    "refs/cli/notebooks.md",
+                    "refs/scripts/cache.md",
+                    "refs/scripts/comp_page.md",
+                    "refs/scripts/disc_get.md",
+                    "refs/scripts/nb_list.md",
+                    "refs/scripts/nvidia.md",
+                    "scripts/cache.py",
+                    "scripts/comp_page.py",
+                    "scripts/disc_get.py",
+                    "scripts/nb_list.py",
+                    "scripts/nvidia/submission_quota.py",
+                    "scripts/nvidia/submit_kernel.py",
+                    "scripts/nvidia/upload_dataset.py"
+                  ],
+                  "note": "Verified current CLI/auth/page/topic/kernel-output and API failure contracts with fresh agents, then corrected only the existing Kaggle operations already inside this owned skill's scope."
+                }
+              ],
+              "skipped": [
+                {
+                  "upstreamPaths": [
+                    "api/__init__.py",
+                    "api/kaggle_api.py"
+                  ],
+                  "reason": "The empty package initializer and generated/legacy API surface did not change the local CLI compatibility concerns reviewed in this update."
+                }
+              ],
+              "reviewedAt": "2026-07-10T14:11:21.150627Z",
+              "note": "Initial v2 Kaggle CLI reference review. Live validation was read-only; submission/upload behavior was exercised through controlled non-live boundaries."
+            },
+            {
+              "fromCommit": "cadeb92943cd63a0eeb730672b440a0b9b02af30",
+              "toCommit": "cadeb92943cd63a0eeb730672b440a0b9b02af30",
+              "relationFingerprint": "sha256:c56f58777d5bdb83102ab78947e5c75f486bb868743c6a4f68b4c697fbc30b08",
+              "accepted": [],
+              "skipped": [],
+              "reviewedAt": "2026-07-10T14:43:53.428800Z",
+              "note": "Post-update verification receipt: fresh agents validated current CLI descriptions and helper behavior, including controlled failure/output-safety paths; the source commit is unchanged and has no additional scoped delta."
+            }
+          ],
+          "relationFingerprint": "sha256:c56f58777d5bdb83102ab78947e5c75f486bb868743c6a4f68b4c697fbc30b08",
+          "sourceId": "Kaggle/kaggle-cli",
+          "sourcePath": "src/kaggle",
+          "sourceRef": "origin/HEAD",
+          "lastReviewedCommit": "cadeb92943cd63a0eeb730672b440a0b9b02af30",
+          "reviewedAt": "2026-07-10T14:43:53.428800Z"
+        }
       }
     }
   }

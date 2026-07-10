@@ -531,6 +531,13 @@ def refresh_submissions(args: argparse.Namespace) -> None:
     slug = args.competition
     cmd = ["kaggle", "competitions", "submissions", "-c", slug, "--page-size", str(args.page_size), "--csv"]
     proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    if proc.returncode != 0:
+        safe_output = json.dumps(proc.stdout[-4000:], ensure_ascii=True)
+        print(
+            f"submissions refresh failed (exit {proc.returncode}); output={safe_output}",
+            file=sys.stderr,
+        )
+        raise SystemExit(proc.returncode or 1)
     rows = parse_kaggle_csv(proc.stdout)
     fetched_at = now_iso()
     base = root / "competitions" / slug / "submissions"

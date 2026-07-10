@@ -34,14 +34,6 @@ OUTPUT_SEPARATOR = "=" * OUTPUT_SEPARATOR_WIDTH
 DEFAULT_SUBMISSION_MESSAGE = f"Submitted via skill ({datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ})"
 
 
-def has_kaggle_credentials() -> bool:
-    """Check for official Kaggle API credentials used by KaggleApi.authenticate()."""
-    if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
-        return True
-    config_dir = os.environ.get("KAGGLE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".kaggle")
-    return os.path.exists(os.path.join(config_dir, "kaggle.json"))
-
-
 def competition_slug(value: str) -> str:
     match = re.search(r"kaggle\.com/competitions/([^/?#]+)", value)
     value = match.group(1) if match else value
@@ -189,7 +181,7 @@ def poll_submission(api, competition: str, message: str, poll_interval: int, tim
             return "timeout", None, elapsed
 
         try:
-            subs = api.competition_submissions(competition)
+            subs = api.competition_submissions(competition) or []
         except Exception as e:
             print(f"  [{format_duration(elapsed)}] API error: {e}")
             time.sleep(poll_interval)
@@ -198,7 +190,7 @@ def poll_submission(api, competition: str, message: str, poll_interval: int, tim
         # Match by message; if multiple match, take the most recent (first in list)
         target = None
         for s in subs:
-            if s.description == message:
+            if s is not None and s.description == message:
                 target = s
                 break
         # Fallback only applies to the default message: a custom --message that
@@ -248,12 +240,6 @@ def main():
     parser.add_argument("-v", "--version", type=int, help="Existing kernel version to submit (skip push and kernel polling)")
     args = parser.parse_args()
 
-    if not has_kaggle_credentials():
-        print("Error: No Kaggle API credentials found.\n"
-              "Create ~/.kaggle/kaggle.json or set KAGGLE_USERNAME/KAGGLE_KEY.",
-              file=sys.stderr)
-        sys.exit(1)
-
     kernel_path = os.path.abspath(args.path)
     if not os.path.isdir(kernel_path):
         print(f"Error: '{kernel_path}' is not a directory.", file=sys.stderr)
@@ -302,6 +288,8 @@ def main():
         print(f"Status:      {status}")
         print(f"Runtime:     {format_duration(elapsed)} (±{args.poll_interval}s)")
 
+    overall_success = status == "complete"
+
     if competitions:
         if not args.file:
             print("Submission:  skipped (--file not specified; read the notebook to find the output filename)")
@@ -316,14 +304,19 @@ def main():
                     print(f"Eval time:   {format_duration(eval_elapsed)} (±{args.poll_interval}s)")
                     if score:
                         print(f"Public score: {score}")
+                    if eval_status != "complete":
+                        overall_success = False
+                else:
+                    overall_success = False
         else:
             print(f"Submission:  skipped (kernel status is '{status}')")
+            overall_success = False
     else:
         print("Submission:  n/a (no competition_sources in metadata)")
 
     print(OUTPUT_SEPARATOR)
 
-    if status != "complete":
+    if not overall_success:
         sys.exit(1)
 
 

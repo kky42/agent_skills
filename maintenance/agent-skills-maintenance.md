@@ -5,8 +5,8 @@ Purpose: keep the `agent_skills` repository healthy by checking mirror integrity
 ## Cadence
 
 - Pievo bundle: `agent-skills-maintenance`
-- Bundle status: ownership migration is complete, but the bundle remains intentionally paused until its old Pievo 0.4 LoopSpec/workflow contract is redesigned for the current Pievo CLI.
-- Intended work cadence after reactivation: every 12 hours (`43200` seconds)
+- Bundle status: unregistered and inactive. Its checked-in spec declares an initial paused state, but no current Pievo loop exists; redesign the old 0.4 LoopSpec/workflow contract before registration.
+- Intended work cadence after registration and activation: every 12 hours (`43200` seconds)
 - Dispatch behavior: an anchored probe runs first. It skips expensive work when the normalized skill model, `skill-sync --check`, the evidence note, priority mirror checks, and owned-source review checks look healthy. It fires the work workflow when maintenance debt is detected.
 - Repo mode: imported-copy mode. The current git root has pre-existing uncommitted work, so managed mode would be inappropriate. Review promoted changes from Pievo's imported workspace/artifacts and apply them to the real repo deliberately.
 
@@ -26,9 +26,9 @@ Core evaluation is anchored in `pievo/loops/agent-skills-maintenance/assets/eval
 
 ## Operator actions
 
-- Do not register/reactivate this bundle until it has been redesigned and validated against the currently installed Pievo CLI contract.
+- Do not register or activate this bundle until it has been redesigned and validated against the currently installed Pievo CLI contract.
 - Before operating it, inspect `pievo --help` and the installed package documentation rather than relying on the historical commands below.
-- Until reactivation, run the repository validation commands directly and review source debt with `thirdparty-update --check --format json`.
+- Until activation, run the repository validation commands directly and review source debt with `thirdparty-update --check --format json`.
 - When Pievo is restored, keep imported-copy mode while the real repo has unrelated uncommitted work; inspect/export candidates and apply wanted changes deliberately.
 - For a mirror update, allow whole-directory replace only when ownership is explicit and the local path is clean. A dirty path may only be recorded without replacement when it already exactly equals the checked upstream tree.
 - For an owned source update, inspect the scoped delta, selectively adapt only relevant changes, and record accepted/skipped decisions in `skill-lock.json`; never merge or apply the upstream tree.
@@ -44,10 +44,10 @@ Architecture and ownership migration evidence from 2026-07-10:
 - Deleted `grill-me`, `browseruse`, `pi-agent-e2e`, and `pi-soul` by user decision and removed their runtime links.
 - All retained Matt Pocock skills, Pievo, Researcher, Playwright CLI, and the selected OpenCLI skills were materialized and locked from their declared Git sources. See `maintenance/skill-inventory.md`.
 - `pi-extension-dev` was rewritten against current installed Pi extension/package/SDK/session/compaction documentation and its source review was recorded.
-- All four OpenCLI-sourced skills are exact mirrors. `pi-extension-dev` has a current owned-source review. Remaining explicit review debt is `kaggle` (2 relations).
+- All four OpenCLI-sourced skills are exact mirrors. Owned source reviews for `pi-extension-dev` and both Kaggle relations are current; no explicit source-review debt remains.
 - The global `@playwright/cli` package was updated with the Playwright mirror; strict dependency/tool verification passes with no unchecked edges.
 - Shell syntax, Python/JSON/Node checks, unit tests, `skill-deps check`, strict dependency verification, and `skill-sync --check` pass.
-- The maintenance bundle remains paused: the Pievo skill is now a current upstream mirror, but the separate maintenance bundle still uses the removed 0.4 LoopSpec/workflow contract.
+- The maintenance bundle remains unregistered/inactive: the Pievo skill is now a current upstream mirror, but the separate maintenance bundle still uses the removed 0.4 LoopSpec/workflow contract.
 
 Historical setup evidence from 2026-07-07:
 
@@ -57,5 +57,5 @@ Historical setup evidence from 2026-07-07:
 - Historical: the then-supported `pievo loop preflight` and `pievo loop apply` commands created generation `1`, eval version `2026.07.07`.
 - Historical: one `pievo loop run-now` completed run `run_5a6c58368b2949dfb199` with decision `dec_9a025e2351404e01aeda` (`invariant_preserved`).
 - The historical generation used legacy metrics `deps_ok` and `thirdparty_manifest_ok`; those results predate the mirror/owned architecture and are superseded.
-- Historical health reported `active/stable`; the current bundle is intentionally paused and that old runtime state is not current evidence.
+- Historical health reported `active/stable`; no loop is currently registered, so that old runtime state is not current evidence.
 - No external effects/actions are configured or pending.

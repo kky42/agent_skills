@@ -1,6 +1,15 @@
 # `comp_page.py`
 
-Fetch competition page sections that the Kaggle CLI does not expose.
+Use the CLI for a page list or one page body:
+
+```bash
+kaggle competitions pages SLUG --format json
+kaggle competitions pages SLUG --page-name evaluation --content --format json
+```
+
+Use `comp_page.py` when the task needs aggregated Overview siblings, stable
+`meta`/`brief` records, raw PageService payloads, or status/title snapshots for
+all competition tabs:
 
 ```bash
 python ./scripts/comp_page.py \
@@ -15,9 +24,9 @@ structured text with source URLs, HTTP status, titles, and `fetched_at`.
 
 Each section record carries two bodies:
 
-- `markdown` — the original page source markdown (tables, code fences, lists
-  preserved). Prefer this when reconstructing clean `.md` files. `--format md`
-  emits this.
+- `markdown` — the page body with internal formatting preserved; outer
+  whitespace is trimmed, Overview siblings receive generated headings, and the
+  body may contain HTML. `--format md` wraps these bodies in a report.
 - `text` — a flattened, whitespace-collapsed plaintext scrape (legacy field).
 
 The Kaggle **Overview tab is composed of several sibling pages** (Description,

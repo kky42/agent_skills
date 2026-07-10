@@ -19,13 +19,12 @@ uv run --with httpx --with kaggle --with kagglesdk --with nbformat \
   python ./scripts/nvidia/<script>.py ...
 ```
 
-Credential requirements vary by helper. Internal-API helpers require
-`KAGGLE_API_TOKEN` (KGAT bearer token), not just `~/.kaggle/kaggle.json`.
-Helpers that call the official Kaggle API or CLI need normal Kaggle CLI
-credentials (`~/.kaggle/kaggle.json` or `KAGGLE_USERNAME`/`KAGGLE_KEY`). The
-dataset upload helper needs normal CLI credentials, and needs `KAGGLE_API_TOKEN`
-only when it must infer the owner because `dataset-metadata.json` has no valid
-`id`. See `./refs/cli/auth.md`.
+Credential requirements vary by helper. Official Kaggle API/CLI operations
+accept the current OAuth, API-token, and legacy methods documented in
+`./refs/cli/auth.md`; helpers must not reject a valid method before the official
+client runs. Direct internal-API helpers still require a bearer token. The
+dataset upload helper needs `KAGGLE_API_TOKEN` specifically only when it must
+infer the owner because `dataset-metadata.json` has no valid `id`.
 
 ```bash
 # For internal-API helpers only:
@@ -147,11 +146,12 @@ PYTHONUNBUFFERED=1 python ./scripts/nvidia/submit_kernel.py <pulled-kernel-folde
   --competition <competition-slug> --file submission.csv -v <version>
 ```
 
-Never rerun blindly. If `kernel-metadata.json` contains multiple
-`competition_sources`, the helper fails unless `--competition` selects exactly
-one target. Read existing logs, confirm the previous process exited, and require
-explicit user intent before retrying any action that may consume a submission
-slot.
+The helper exits nonzero when kernel execution, submission acceptance, or
+submission evaluation fails or times out. Never rerun blindly. If
+`kernel-metadata.json` contains multiple `competition_sources`, the helper fails
+unless `--competition` selects exactly one target. Read existing logs, confirm
+the previous process exited, and require explicit user intent before retrying
+anything that may consume a submission slot.
 
 ## Dataset Upload Helper
 
@@ -167,9 +167,11 @@ New datasets are private unless `--public` is explicitly requested; existing
 metadata keeps its current `isPrivate` value unless `--public` or `--private` is
 passed. Require an explicit license for newly generated metadata; preserve
 existing metadata fields when the local `dataset-metadata.json` already has
-them. If collaborators are added, verify metadata after the SDK update because
-Kaggle may treat collaborators as a dataset-settings update. Record dataset
-slug, command, file manifest/hashes, status, and URL in the active repo.
+them. The helper fails closed if Kaggle CLI prints a dataset creation/version
+error even when that CLI process exits zero. If collaborators are added, verify
+metadata after the SDK update because Kaggle may treat collaborators as a
+dataset-settings update. Record dataset slug, command, file manifest/hashes,
+status, and URL in the active repo.
 
 ## Competition Page Helpers
 

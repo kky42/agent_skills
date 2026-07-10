@@ -87,7 +87,7 @@ def run_query(args: argparse.Namespace, sort: str) -> dict[str, Any]:
     if args.kernel_type:
         cmd.extend(["--kernel-type", args.kernel_type])
     proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
-    rows = parse_csv(proc.stdout)
+    rows = [] if proc.returncode != 0 else parse_csv(proc.stdout)
     return {
         "sort_by": sort,
         "command": cmd,
@@ -192,6 +192,14 @@ def main() -> int:
     }
     for sort in sorts:
         result = run_query(args, sort)
+        if result["returncode"] != 0:
+            safe_output = json.dumps(result["raw_output"][-4000:], ensure_ascii=True)
+            print(
+                f"kaggle kernels list failed for sort={sort} "
+                f"(exit {result['returncode']}); output={safe_output}",
+                file=sys.stderr,
+            )
+            return int(result["returncode"] or 1)
         if args.with_meta:
             for item in result["items"]:
                 if item.get("ref"):

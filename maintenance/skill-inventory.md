@@ -72,7 +72,7 @@ Resolved from `origin/main` at `730ffecd7278b07b27b2da0c91c9920391be60f3`.
 
 - `pievo`
 
-The previous local customization and obsolete reference directory were discarded. The separate maintenance loop bundle remains paused until it is redesigned for the current Pievo CLI contract.
+The previous local customization and obsolete reference directory were discarded. The separate maintenance loop bundle is unregistered/inactive until it is redesigned for the current Pievo CLI contract.
 
 ## Owned by source
 
@@ -98,7 +98,7 @@ The previous local customization and obsolete reference directory were discarded
   - skill dependency: `playwright-cli`
   - tool dependency: Kaggle CLI
 
-Both Kaggle source relations remain review debt and require a dedicated selective-adoption pass.
+Both Kaggle relations were selectively reviewed and recorded: NVIDIA through `9a9333817802fef8a81c3e999bef219edf05e789`, and Kaggle CLI through `cadeb92943cd63a0eeb730672b440a0b9b02af30`.
 
 ## Deleted
 
@@ -113,4 +113,4 @@ Both Kaggle source relations remain review debt and require a dedicated selectiv
 - All 28 mirrors have resolved mirror lock state.
 - Legacy v1 source and lock files are empty.
 - Strict skill/tool dependency verification passes.
-- Remaining source-review debt: `kaggle` (2 relations).
+- Remaining source-review debt: none.

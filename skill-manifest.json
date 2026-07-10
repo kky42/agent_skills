@@ -201,7 +201,7 @@
           },
           "watch": {
             "include": ["cli.py", "api/**"],
-            "localPaths": ["refs/cli/**", "scripts/**"],
+            "localPaths": ["SKILL.md", "refs/cli/**", "refs/scripts/**", "scripts/**"],
             "localConcerns": [
               {
                 "id": "kaggle-cli-compatibility",

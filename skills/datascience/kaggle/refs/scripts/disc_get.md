@@ -23,14 +23,17 @@ The primary path calls Kaggle's authenticated discussions API
 `ListComments` paginated until exhausted for the full comment tree). This is
 the same data `kaggle competitions topics show` uses, but the script keeps the
 **full untruncated bodies**, the **reply nesting**, and the **author names**
-together — none of which the flat `topic-messages` CSV or the truncated
-`topics show` tree give you on their own.
+together — the deprecated flat `topic-messages` alias and the default
+`topics show` tree do not provide that combination.
 
-Credentials are required for the full thread. They are read from, in order:
+Credentials are required for the full thread. This direct HTTP helper reads:
 
-- `KAGGLE_USERNAME` + `KAGGLE_KEY` env vars
-- `KAGGLE_API_TOKEN` env var (bearer)
-- `$KAGGLE_CONFIG_DIR/kaggle.json` or `~/.kaggle/kaggle.json`
+- `KAGGLE_API_TOKEN` or `$KAGGLE_CONFIG_DIR/access_token` / `~/.kaggle/access_token`;
+- `KAGGLE_USERNAME` + `KAGGLE_KEY`;
+- `$KAGGLE_CONFIG_DIR/kaggle.json` or `~/.kaggle/kaggle.json`.
+
+OAuth-only CLI sessions are not read directly; export an access token for this
+helper instead.
 
 Without credentials the script degrades gracefully to an unauthenticated
 page-title + visible-text scrape (`auth: "unauthenticated"`, no comments).

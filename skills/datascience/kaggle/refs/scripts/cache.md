@@ -97,8 +97,10 @@ python ./scripts/cache.py status \
 
 ## Storage Model
 
-`current.json` files are overwritten by refreshes and are the default source for
-local search.
+`current.json` files are the default source for local search. If a wrapped
+process exits nonzero after any applicable retries, that target's current
+snapshot is not replaced. Multi-target refreshes are not transactional; earlier
+targets may already have updated before a later target fails.
 
 Mutable score signals are also written to append-only observations when a
 previous non-empty value changes:

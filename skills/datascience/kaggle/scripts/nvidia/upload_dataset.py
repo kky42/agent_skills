@@ -29,14 +29,6 @@ def has_kaggle_token() -> bool:
     return bool(os.environ.get("KAGGLE_API_TOKEN"))
 
 
-def has_kaggle_cli_credentials() -> bool:
-    """Check for official Kaggle CLI/API credentials used by upload commands."""
-    if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
-        return True
-    config_dir = os.environ.get("KAGGLE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".kaggle")
-    return os.path.exists(os.path.join(config_dir, "kaggle.json"))
-
-
 def get_kaggle_username() -> str:
     """Resolve Kaggle username from the KGAT token."""
     token = os.environ.get("KAGGLE_API_TOKEN")
@@ -219,6 +211,15 @@ def sanitize_cli_output(text: str, *, max_chars: int = _MAX_CLI_OUTPUT_CHARS) ->
     return cleaned
 
 
+def upload_succeeded(result: subprocess.CompletedProcess) -> bool:
+    """Reject nonzero exits and Kaggle CLI's explicit logical-error messages."""
+    if result.returncode != 0:
+        return False
+    output = (result.stdout + result.stderr).lower()
+    error_markers = ("dataset creation error:", "dataset version creation error:")
+    return not any(marker in output for marker in error_markers)
+
+
 def parse_collaborator(value: str) -> dict[str, str]:
     """Parse a 'username:role' string. Role defaults to 'reader'."""
     parts = value.split(":", maxsplit=1)
@@ -313,13 +314,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # Validate credentials for the Kaggle CLI/API upload commands.
-    if not has_kaggle_cli_credentials():
-        print("Error: No Kaggle CLI/API credentials found.\n"
-              "Create ~/.kaggle/kaggle.json or set KAGGLE_USERNAME and KAGGLE_KEY for upload commands.",
-              file=sys.stderr)
-        sys.exit(1)
-
     # Validate data path.
     data_path = os.path.abspath(args.path)
     if not os.path.isdir(data_path):
@@ -358,7 +352,7 @@ def main():
     # Handle output. Kaggle CLI output is untrusted, so strip terminal
     # escape/control sequences and bound its length before printing.
     output = sanitize_cli_output((result.stdout + result.stderr)).strip()
-    if result.returncode != 0:
+    if not upload_succeeded(result):
         print(f"Upload failed:\n{output}", file=sys.stderr)
         if "already exists" in output.lower() and not args.version_notes:
             print(

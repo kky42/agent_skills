@@ -66,9 +66,15 @@ def _submission_rows(slug: str, page_size: int = 100) -> list[dict[str, str]] | 
     if result.returncode != 0:
         print(f"[quota] submissions fetch returned {result.returncode}", file=sys.stderr)
         return None
-    # Some CLI versions print a deprecation notice before the CSV; start at the header.
+    # Notices may precede the CSV, and current CLI output starts with `ref`
+    # while older versions started with `fileName`. Locate the header by fields.
     lines = result.stdout.splitlines()
-    start = next((i for i, ln in enumerate(lines) if ln.startswith("fileName,")), None)
+    start = None
+    for index, line in enumerate(lines):
+        fields = next(csv.reader([line]), [])
+        if "date" in fields and ("ref" in fields or "fileName" in fields):
+            start = index
+            break
     if start is None:
         return None
     reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
