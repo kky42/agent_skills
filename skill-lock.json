@@ -91,10 +91,10 @@
     },
     "pievo": {
       "mirror": {
-        "resolvedCommit": "730ffecd7278b07b27b2da0c91c9920391be60f3",
+        "resolvedCommit": "a285f2eed65c542c49d2177924ac52ebf205649e",
         "sourcePath": "skills/pievo",
-        "treeHash": "sha256:d730bb49901ed46644a138b283a17a8d637eabbe071d6cd933e465180cfe08fb",
-        "syncedAt": "2026-07-10T09:10:12.957331Z"
+        "treeHash": "sha256:e4495cc4501e63f304e7ab79966cf3a632f1920881ec47aed54b45fa8d475e7c",
+        "syncedAt": "2026-07-10T16:40:53.362119Z"
       }
     },
     "playwright-cli": {
