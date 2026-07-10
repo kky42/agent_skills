@@ -236,64 +236,6 @@
         "syncedAt": "2026-07-10T09:11:43.460729Z"
       }
     },
-    "pi-extension-dev": {
-      "relations": {
-        "pi-extension-sdk-docs": {
-          "reviews": [
-            {
-              "fromCommit": null,
-              "toCommit": "81de5702c6816538ea97d05d9060fe435b80bf35",
-              "relationFingerprint": "sha256:0b296357a09f466b63d3f07c580b831404b3deb6838a09131a5f8485beb16541",
-              "accepted": [
-                {
-                  "upstreamPaths": [
-                    "README.md",
-                    "docs/compaction.md",
-                    "docs/extensions.md",
-                    "docs/packages.md",
-                    "docs/sdk.md",
-                    "docs/session-format.md",
-                    "examples/sdk/06-extensions.ts",
-                    "examples/sdk/11-sessions.ts"
-                  ],
-                  "localPaths": [
-                    "SKILL.md"
-                  ],
-                  "note": "Rewrote the owned skill against the current Pi extension, package, SDK, session, compaction, and selected SDK example contracts."
-                }
-              ],
-              "skipped": [],
-              "reviewedAt": "2026-07-10T09:18:54.628037Z",
-              "note": "Initial v2 source-review baseline recorded during ownership migration."
-            },
-            {
-              "fromCommit": "81de5702c6816538ea97d05d9060fe435b80bf35",
-              "toCommit": "bc469b03389135edf5d179ab7718c2085cdfd3a9",
-              "relationFingerprint": "sha256:0b296357a09f466b63d3f07c580b831404b3deb6838a09131a5f8485beb16541",
-              "accepted": [],
-              "skipped": [],
-              "reviewedAt": "2026-07-10T09:54:01.742946Z",
-              "note": "Upstream repository advanced, but none of the scoped Pi extension/SDK documentation or examples changed."
-            },
-            {
-              "fromCommit": "bc469b03389135edf5d179ab7718c2085cdfd3a9",
-              "toCommit": "91585d9a3829831b07560901c4b3e9bbe3b4e35a",
-              "relationFingerprint": "sha256:0b296357a09f466b63d3f07c580b831404b3deb6838a09131a5f8485beb16541",
-              "accepted": [],
-              "skipped": [],
-              "reviewedAt": "2026-07-10T14:44:21.704175Z",
-              "note": "The Pi repository advanced to this commit, but none of the scoped extension/SDK documentation or examples changed."
-            }
-          ],
-          "relationFingerprint": "sha256:0b296357a09f466b63d3f07c580b831404b3deb6838a09131a5f8485beb16541",
-          "sourceId": "earendil-works/pi-mono",
-          "sourcePath": "packages/coding-agent",
-          "sourceRef": "origin/main",
-          "lastReviewedCommit": "91585d9a3829831b07560901c4b3e9bbe3b4e35a",
-          "reviewedAt": "2026-07-10T14:44:21.704175Z"
-        }
-      }
-    },
     "opencli-usage": {
       "mirror": {
         "resolvedCommit": "6129bb3953d5eebd8dd67f96802b320c723f50ca",

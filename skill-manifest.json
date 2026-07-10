@@ -36,11 +36,6 @@
       "kind": "git",
       "url": "https://github.com/Kaggle/kaggle-cli.git",
       "defaultRef": "origin/HEAD"
-    },
-    "earendil-works/pi-mono": {
-      "kind": "git",
-      "url": "https://github.com/earendil-works/pi-mono.git",
-      "defaultRef": "origin/main"
     }
   },
   "skills": {
@@ -256,44 +251,6 @@
         "source": "jackwener/opencli",
         "path": "skills/opencli-usage"
       }
-    },
-    "pi-extension-dev": {
-      "path": "skills/pi_agent/pi-extension-dev",
-      "ownership": "owned",
-      "relations": [
-        {
-          "id": "pi-extension-sdk-docs",
-          "type": "content-source",
-          "source": {
-            "source": "earendil-works/pi-mono",
-            "path": "packages/coding-agent"
-          },
-          "watch": {
-            "include": ["README.md", "docs/extensions.md", "docs/sdk.md", "docs/packages.md", "docs/session-format.md", "docs/compaction.md", "examples/sdk/06-extensions.ts", "examples/sdk/11-sessions.ts"],
-            "localPaths": ["SKILL.md"],
-            "localConcerns": [
-              {
-                "id": "extension-development-contract",
-                "description": "Selectively update current Pi extension, package, SDK testing, persistence, and real-E2E guidance."
-              }
-            ]
-          }
-        },
-        {
-          "id": "pi-cli-tool",
-          "type": "tool-dependency",
-          "tool": {
-            "kind": "npm-global",
-            "package": "@earendil-works/pi-coding-agent",
-            "constraint": ">=0.80.6"
-          },
-          "updatePolicy": "compatible",
-          "verify": [
-            ["pi", "--version"],
-            ["pi", "--help"]
-          ]
-        }
-      ]
     },
     "pievo": {
       "path": "skills/thirdparty/pievo",

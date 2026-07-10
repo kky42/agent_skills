@@ -7,9 +7,9 @@ Current explicit ownership after the 2026-07-10 migration.
 | Type | Count |
 |---|---:|
 | Mirror | 28 |
-| Owned | 5 |
-| Active | 33 |
-| Deleted in this migration | 4 |
+| Owned | 4 |
+| Active | 32 |
+| Deleted in this migration | 5 |
 
 ## Mirror by source
 
@@ -84,12 +84,6 @@ The previous local customization and obsolete reference directory were discarded
   - tool dependencies: `@playwright/cli`, local ChatGPT helper scripts
 - `plan-refiner`
 
-### `earendil-works/pi-mono` selective sources — 1
-
-- `pi-extension-dev`
-
-`pi-extension-dev` was rewritten against the current extension/package/SDK/session/compaction docs and its source review was recorded.
-
 ### Multi-source Kaggle — 1
 
 - `kaggle`
@@ -106,10 +100,11 @@ Both Kaggle relations were selectively reviewed and recorded: NVIDIA through `9a
 - `browseruse` — local skill and metadata removed; runtime links removed.
 - `pi-agent-e2e` — removed by explicit user decision; its fresh-process guidance is no longer a separate skill.
 - `pi-soul` — removed by explicit user decision.
+- `pi-extension-dev` — removed by explicit user decision.
 
 ## Compatibility state
 
-- All 33 active skills have explicit ownership.
+- All 32 active skills have explicit ownership.
 - All 28 mirrors have resolved mirror lock state.
 - Legacy v1 source and lock files are empty.
 - Strict skill/tool dependency verification passes.

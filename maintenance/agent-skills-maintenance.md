@@ -40,11 +40,10 @@ Core evaluation is anchored in `pievo/loops/agent-skills-maintenance/assets/eval
 Architecture and ownership migration evidence from 2026-07-10:
 
 - Added the mirror/owned model, typed relations, review receipts, schemas, normalized model loader, safe mirror replacement, real runtime-link checks, and dependency verification.
-- All **33 active skills** now have explicit ownership: **28 mirrors** and **5 owned**. Legacy v1 records are empty.
-- Deleted `grill-me`, `browseruse`, `pi-agent-e2e`, and `pi-soul` by user decision and removed their runtime links.
+- All **32 active skills** now have explicit ownership: **28 mirrors** and **4 owned**. Legacy v1 records are empty.
+- Deleted `grill-me`, `browseruse`, `pi-agent-e2e`, `pi-soul`, and `pi-extension-dev` by user decision and removed their runtime links.
 - All retained Matt Pocock skills, Pievo, Researcher, Playwright CLI, and the selected OpenCLI skills were materialized and locked from their declared Git sources. See `maintenance/skill-inventory.md`.
-- `pi-extension-dev` was rewritten against current installed Pi extension/package/SDK/session/compaction documentation and its source review was recorded.
-- All four OpenCLI-sourced skills are exact mirrors. Owned source reviews for `pi-extension-dev` and both Kaggle relations are current; no explicit source-review debt remains.
+- All four OpenCLI-sourced skills are exact mirrors. Both Kaggle owned-source reviews are current; no explicit source-review debt remains.
 - The global `@playwright/cli` package was updated with the Playwright mirror; strict dependency/tool verification passes with no unchecked edges.
 - Shell syntax, Python/JSON/Node checks, unit tests, `skill-deps check`, strict dependency verification, and `skill-sync --check` pass.
 - The maintenance bundle remains unregistered/inactive: the Pievo skill is now a current upstream mirror, but the separate maintenance bundle still uses the removed 0.4 LoopSpec/workflow contract.
