@@ -35,3 +35,8 @@ _Avoid_: Merge, sync
 **Review scope**:
 The upstream paths and local concerns that define which source changes deserve evaluation for an owned skill.
 _Avoid_: Whole upstream repository
+
+## Decisions
+
+**Local authority for owned skills** (2026-07-10):
+We classify skills only as mirrors or owned: mirrors are exact single-source copies replaced from upstream, while this repository remains authoritative for every owned skill. External changes to owned skills are reviewed within declared scopes and selectively adapted, never merged wholesale, because source provenance does not grant upstream authority and unrelated source changes must not enter local content.
