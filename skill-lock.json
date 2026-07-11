@@ -75,10 +75,10 @@
     },
     "pievo": {
       "mirror": {
-        "resolvedCommit": "c108d56408ca7f798d1d846a4f81ccd78355cae6",
+        "resolvedCommit": "e67464b7851efe2def6cefcc7c68866fb9fd8e0b",
         "sourcePath": "skills/pievo",
         "treeHash": "sha256:d52a60d71cd0f3b92f7faaf3be281fff92a85dcdd8ece0e03c40a7d17be17182",
-        "syncedAt": "2026-07-11T07:23:54.911557Z"
+        "syncedAt": "2026-07-11T23:02:42.781125Z"
       }
     },
     "playwright-cli": {
