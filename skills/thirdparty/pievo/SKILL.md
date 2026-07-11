@@ -69,10 +69,20 @@ Unknown config keys are rejected at every level, and durations must use `<N>s|m|
 
 ```js
 export const meta = { name: "kb-update", description: "Keep the knowledge base current." };
-const summary = await agent("Review recent changes and update the knowledge base.", { label: "update" });
-return { status: "complete", message: summary.slice(0, 200) };
-// return { status: "blocked", message: "why" } when a human must step in — this blocks the loop.
+const output = await agent("Review recent changes and update the knowledge base.", { label: "update" });
+return {
+  status: "complete",
+  message: output.slice(0, 200),
+  data: { raw_output: output },
+};
+// return { status: "blocked", message: "why", data: { raw_output: output } }
+// when a human must step in — this blocks the loop.
 ```
+
+Workflow result rules:
+
+- Put only `status`, `message`, and `data` at the top level. All domain fields and complete agent output belong in `data`.
+- Keep `message` brief and human-readable. For plain text, preserve the full output as `data.raw_output`; for schema-constrained structured output, return that object directly as `data`.
 
 Author against these runtime boundaries:
 
