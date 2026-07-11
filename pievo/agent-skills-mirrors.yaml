@@ -9,7 +9,7 @@ cadence:
 workflow:
   name: agent-skills-mirrors
   args:
-    mode: audit
+    mode: live
   timeout: 240m
 quotas:
   max_runs_per_day: 1
