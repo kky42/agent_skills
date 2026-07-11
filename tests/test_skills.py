@@ -663,64 +663,91 @@ class UpdateTests(Fixture):
 
 
 class WorkflowContractTests(unittest.TestCase):
-    def test_malformed_normalization_and_blocked_candidate_cleanup_contract(self) -> None:
+    def test_two_resumable_sessions_revision_bound_and_reviewer_finalization(self) -> None:
         runtime = Path("/Users/kky/dev/pi/pi-flow/dist/runtime.js")
         if not runtime.exists():
             self.skipTest("pi-flow runtime is not available")
         script = f"""
-const {{ readFileSync }} = require('node:fs');
-(async () => {{
-const {{ runWorkflow, ConcurrencyLimiter }} = await import({json.dumps(runtime.as_uri())});
-const source = readFileSync({json.dumps(str(REPO / '.pi/workflows/agent-skills-mirrors.js'))}, 'utf8');
-const detail = (path) => ({{candidate_worktree:path,base_commit:'a'.repeat(40),candidate_commit:'a'.repeat(40),primary_head:'b'.repeat(40),origin_main:'a'.repeat(40),primary_clean:false,added_skills:[],removed_skills:[],updated_skills:[],pending_updates:[],metadata_updates:[],rejected_updates:[],excluded_skills:[],deferred_skills:[],dependency_changes:[],validation:[],deployment:{{committed:false,pushed:false,macmini:'not-run',macbook:'not-run',cleanup:'not-confirmed'}},warnings:['blocked'],human_actions:['inspect']}});
-async function execute(kind) {{
-  const calls=[]; const path='/tmp/agent-skills-mirrors-worktrees/candidate-1'; const runMode=kind==='identity'?'live':'audit';
-  const result=await runWorkflow(source, {{cwd:{json.dumps(str(REPO))}, limiter:new ConcurrencyLimiter(2), replayEnabled:false, args:{{mode:runMode}}, runAgent:async(call)=>{{
-    calls.push({{label:call.label,type:call.subagentType}});
-    if (call.label==='mirror-candidate') {{
-      if (kind==='malformed') return {{unexpected:true}};
-      if (kind==='unsafe') return {{status:'blocked',message:'bad path',data:detail('/tmp/agent-skills-mirrors-worktrees/bad path')}};
-      const value=detail(path); value.primary_clean=kind==='identity';
-      return {{status:kind==='identity'?'complete':'blocked',message:'candidate',data:value}};
-    }}
-    if (call.label==='mirror-review') return {{approved:true,message:'approved',findings:[],candidate_worktree:path,base_commit:'a'.repeat(40),candidate_commit:'a'.repeat(40)}};
-    if (call.label==='mirror-finalizer') {{ const value=detail(path); value.primary_clean=true; value.candidate_commit='c'.repeat(40); return {{status:'complete',message:'wrong identity',data:value}}; }}
-    if (call.label.endsWith('-verify')) return {{registered:true,clean:true,path,message:'verified'}};
-    if (call.label.endsWith('-remove')) return {{cleaned:true,path,message:'removed'}};
-    throw new Error('unexpected call '+call.label);
-  }}}});
-  return {{value:result.result,calls,agentCount:result.agentCount}};
-}}
-console.log(JSON.stringify({{malformed:await execute('malformed'),blocked:await execute('blocked'),unsafe:await execute('unsafe'),identity:await execute('identity')}}));
-}})().catch((error) => {{ console.error(error); process.exit(1); }});
+const {{readFileSync}}=require('node:fs');
+(async()=>{{
+ const {{runWorkflow,ConcurrencyLimiter}}=await import({json.dumps(runtime.as_uri())});
+ const source=readFileSync({json.dumps(str(REPO / '.pi/workflows/agent-skills-mirrors.js'))},'utf8');
+ const path='/tmp/agent-skills-mirrors-worktrees/candidate-1', base='a'.repeat(40);
+ const data=(commit=base)=>({{candidate_worktree:path,base_commit:base,candidate_commit:commit,primary_head:base,origin_main:base,primary_clean:true,added_skills:[],removed_skills:[],updated_skills:[],pending_updates:[],metadata_updates:[],rejected_updates:[],excluded_skills:[],deferred_skills:[],dependency_changes:[],validation:['ok'],warnings:[],human_actions:[],deployment:{{committed:false,pushed:false,macmini:'not-run',macbook:'not-run',cleanup:'not-confirmed'}}}});
+ async function execute(kind){{let worker=0, reviews=0; const calls=[];
+  const out=await runWorkflow(source,{{cwd:{json.dumps(str(REPO))},limiter:new ConcurrencyLimiter(2),replayEnabled:false,args:{{mode:'live'}},runAgent:async call=>{{
+   calls.push({{label:call.label,type:call.subagentType,key:call.sessionKey,prompt:call.prompt}});
+   if(call.label==='mirror-worker'||call.label==='mirror-worker-fix'){{worker++; return {{status:'complete',message:'worker',data:data(String.fromCharCode(96+worker).repeat(40))}};}}
+   if(call.label==='mirror-review'){{reviews++; const approved=kind==='approve' || false; return {{approved,message:approved?'ok':'reject',findings:['bounded finding'],fixRequests:approved?[]:[{{code:'validation',path:'tests/test_skills.py'}}],candidate_worktree:path,base_commit:base,candidate_commit:String.fromCharCode(96+worker).repeat(40)}};}}
+   if(call.label==='mirror-review-finalize'){{const d=data(String.fromCharCode(96+worker).repeat(40)); d.deployment={{committed:true,pushed:true,macmini:'ok',macbook:'ok',cleanup:'not-confirmed'}}; return {{status:'complete',message:'done',data:d}};}}
+   if(call.label.endsWith('-verify')) return {{registered:true,clean:true,path,message:'verified'}};
+   if(call.label.endsWith('-remove')) return {{cleaned:true,path,message:'removed'}};
+   throw Error('unexpected '+call.label);
+  }}}}); return {{result:out.result,calls,worker,reviews}};
+ }}
+ console.log(JSON.stringify({{approve:await execute('approve'),reject:await execute('reject')}}));
+}})().catch(e=>{{console.error(e);process.exit(1)}});
 """
         process = subprocess.run(["node", "-e", script], text=True, capture_output=True)
         self.assertEqual(process.returncode, 0, process.stderr)
         output = json.loads(process.stdout)
-        malformed = output["malformed"]
-        self.assertEqual(malformed["agentCount"], 1)
-        self.assertEqual(malformed["value"]["status"], "blocked")
-        self.assertEqual(set(malformed["value"]), {"status", "message", "data"})
-        blocked = output["blocked"]
-        self.assertEqual(blocked["agentCount"], 3)
-        self.assertEqual(blocked["value"]["data"]["deployment"]["cleanup"], "removed")
-        self.assertEqual(set(blocked["value"]), {"status", "message", "data"})
-        unsafe = output["unsafe"]
-        self.assertEqual(unsafe["agentCount"], 1)
-        self.assertEqual(unsafe["value"]["data"]["candidate_worktree"], "")
-        self.assertEqual(unsafe["value"]["data"]["deployment"]["cleanup"], "not-confirmed")
+        approved, rejected = output["approve"], output["reject"]
+        self.assertEqual(approved["result"]["status"], "complete")
+        self.assertTrue(approved["result"]["data"]["deployment"]["pushed"])
+        self.assertEqual(approved["result"]["data"]["deployment"]["cleanup"], "removed")
+        self.assertEqual(rejected["worker"], 3)  # initial plus at most two fixes
+        self.assertEqual(rejected["reviews"], 3)
+        self.assertEqual(rejected["result"]["status"], "blocked")
+        self.assertFalse(rejected["result"]["data"]["deployment"]["pushed"])
+        for case in (approved, rejected):
+            self.assertEqual({call["key"] for call in case["calls"]}, {"mirror-worker", "mirror-reviewer"})
+            self.assertTrue(all(call["type"] == "daily-driver" for call in case["calls"]))
+            self.assertTrue(all(call["key"] == "mirror-reviewer" for call in case["calls"] if "finalize" in call["label"] or "cleanup" in call["label"]))
+            self.assertFalse(any("finalize" in call["label"] for call in case["calls"] if call["key"] == "mirror-worker"))
+            self.assertEqual(set(case["result"]), {"status", "message", "data"})
+            self.assertEqual(set(case["result"]["data"]["deployment"]), {"committed", "pushed", "macmini", "macbook", "cleanup"})
+
+    def test_workflow_static_fail_closed_invariants(self) -> None:
+        source = (REPO / ".pi/workflows/agent-skills-mirrors.js").read_text(encoding="utf-8")
+        self.assertIn('mode === "audit" && current.data.candidate_commit !== current.data.base_commit', source)
+        self.assertIn('mode === "live" && reviewValid', source)
+        self.assertIn("sameBaseline(finalizer.data, current.data)", source)
+        self.assertIn("validFixRequests(review.fixRequests)", source)
+        self.assertNotIn("findings:review.findings", source)
+        self.assertEqual(source.count('session_key:workerSession'), 2)
+        self.assertGreaterEqual(source.count('session_key:reviewerSession'), 3)
+
+    def test_executable_malformed_unsafe_cleanup_and_finalizer_identity_fail_closed(self) -> None:
+        runtime = Path("/Users/kky/dev/pi/pi-flow/dist/runtime.js")
+        if not runtime.exists():
+            self.skipTest("pi-flow runtime is not available; static invariants remain covered")
+        script = f"""
+const {{readFileSync}}=require('node:fs');
+(async()=>{{const {{runWorkflow,ConcurrencyLimiter}}=await import({json.dumps(runtime.as_uri())});
+const source=readFileSync({json.dumps(str(REPO / '.pi/workflows/agent-skills-mirrors.js'))},'utf8'); const path='/tmp/agent-skills-mirrors-worktrees/case', id='a'.repeat(40);
+const d=(p=path)=>({{candidate_worktree:p,base_commit:id,candidate_commit:id,primary_head:id,origin_main:id,primary_clean:true,added_skills:[],removed_skills:[],updated_skills:[],pending_updates:[],metadata_updates:[],rejected_updates:[],excluded_skills:[],deferred_skills:[],dependency_changes:[],validation:[],warnings:[],human_actions:[],deployment:{{committed:false,pushed:false,macmini:'not-run',macbook:'not-run',cleanup:'not-confirmed'}}}});
+async function run(kind){{const calls=[];const out=await runWorkflow(source,{{cwd:{json.dumps(str(REPO))},limiter:new ConcurrencyLimiter(2),replayEnabled:false,args:{{mode:kind==='audit'?'audit':'live'}},runAgent:async c=>{{calls.push(c.label);
+if(c.label==='mirror-worker'){{if(kind==='malformed')return {{bad:true}};if(kind==='unsafe')return {{status:'complete',message:'x',data:d('/tmp/agent-skills-mirrors-worktrees/bad path')}};return {{status:'complete',message:'x',data:d()}};}}
+if(c.label==='mirror-review')return {{approved:kind!=='audit',message:kind==='audit'?'reject':'ok',findings:kind==='audit'?['audit issue']:[],fixRequests:kind==='audit'?[{{code:'validation',path:'tests/test_skills.py'}}]:[],candidate_worktree:path,base_commit:id,candidate_commit:id}};
+if(c.label==='mirror-review-finalize'){{const x=d();x.primary_head='b'.repeat(40);return {{status:'complete',message:'wrong baseline',data:x}};}}
+if(c.label.endsWith('-verify'))return {{registered:true,clean:true,path,message:'ok'}};if(c.label.endsWith('-remove'))return {{cleaned:true,path,message:'ok'}};throw Error(c.label)}}}});return {{result:out.result,calls}}}}
+console.log(JSON.stringify({{malformed:await run('malformed'),unsafe:await run('unsafe'),identity:await run('identity'),audit:await run('audit')}}))}})().catch(e=>{{console.error(e);process.exit(1)}});
+"""
+        process = subprocess.run(["node", "-e", script], text=True, capture_output=True)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        output = json.loads(process.stdout)
+        self.assertEqual(output["malformed"]["result"]["status"], "blocked")
+        self.assertEqual(output["unsafe"]["result"]["data"]["candidate_worktree"], "")
+        self.assertNotIn("malformed-candidate-cleanup-verify", output["malformed"]["calls"])
+        self.assertNotIn("unsafe", " ".join(output["unsafe"]["calls"]))
+        audit = output["audit"]
+        self.assertEqual(audit["result"]["status"], "blocked")
+        self.assertNotIn("mirror-worker-fix", audit["calls"])
         identity = output["identity"]
-        self.assertEqual(identity["agentCount"], 5)
-        self.assertEqual(identity["value"]["status"], "blocked")
-        self.assertEqual(identity["value"]["data"]["candidate_commit"], "a" * 40)
-        self.assertEqual(identity["value"]["data"]["deployment"]["cleanup"], "removed")
-        self.assertEqual(set(identity["value"]), {"status", "message", "data"})
-        for case in output.values():
-            self.assertIn("pending_updates", case["value"]["data"])
-            self.assertIn("metadata_updates", case["value"]["data"])
-            self.assertIsInstance(case["value"]["data"]["pending_updates"], list)
-            self.assertIsInstance(case["value"]["data"]["metadata_updates"], list)
-        self.assertTrue(all(call["type"] == "daily-driver" for case in output.values() for call in case["calls"]), output)
+        self.assertEqual(identity["result"]["status"], "blocked")
+        self.assertEqual(identity["result"]["data"]["deployment"]["cleanup"], "removed")
+        self.assertIn("finalizer-cleanup-verify", identity["calls"])
+        self.assertIn("finalizer-cleanup-remove", identity["calls"])
 
 
 class HelperTests(unittest.TestCase):

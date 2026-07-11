@@ -6,6 +6,13 @@ const tempParent = "/tmp/agent-skills-mirrors-worktrees";
 const listKeys = ["added_skills","removed_skills","updated_skills","pending_updates","metadata_updates","rejected_updates","excluded_skills","deferred_skills","dependency_changes","validation","warnings","human_actions"];
 const exact = (value, keys) => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
 const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
+const boundedText = (value, max = 500) => typeof value === "string" && value.length <= max && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(value);
+const boundedFindings = (value) => Array.isArray(value) && value.length <= 8 && value.every((item) => boundedText(item));
+const fixCodes = ["allowlist","validation","mirror_drift","source_coverage","security","dependency","classification","identity"];
+const safeRelativePath = (value) => typeof value === "string" && value.length <= 240 && value !== "" && !value.startsWith("/") && !value.split("/").some((part) => part === "" || part === "." || part === "..") && /^[A-Za-z0-9._/-]+$/.test(value);
+const validFixRequests = (value) => Array.isArray(value) && value.length <= 8 && value.every((item) => exact(item,["code","path"]) && fixCodes.includes(item.code) && (item.path === "" || safeRelativePath(item.path)));
+const workerSession = "mirror-worker";
+const reviewerSession = "mirror-reviewer";
 const commitId = (value) => typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
 const safeWorktree = (value) => {
   if (typeof value !== "string") return false;
@@ -37,16 +44,16 @@ const common = `Primary checkout is /Users/kky/dev/agent_skills on the local Mac
 
 const cleanupCandidate = async (path, label) => {
   if (!safeWorktree(path)) return { cleaned:false, message:"Candidate path was not inside the dedicated workflow temp parent." };
-  const verification = await agent(`${common}\nRead-only cleanup guard. Run 'git -C /Users/kky/dev/agent_skills worktree list --porcelain' and verify that the exact path ${path} is a registered worktree. Also verify its git status is clean. Do not remove or edit anything.`, { label:label+"-verify",subagent_type:"daily-driver",schema:{type:"object",additionalProperties:false,required:["registered","clean","path","message"],properties:{registered:{type:"boolean"},clean:{type:"boolean"},path:{type:"string"},message:{type:"string"}}} });
+  const verification = await agent(`${common}\nRead-only cleanup guard. Run 'git -C /Users/kky/dev/agent_skills worktree list --porcelain' and verify that the exact path ${path} is a registered worktree. Also verify its git status is clean. Do not remove or edit anything.`, { label:label+"-verify",subagent_type:"daily-driver",session_key:reviewerSession,schema:{type:"object",additionalProperties:false,required:["registered","clean","path","message"],properties:{registered:{type:"boolean"},clean:{type:"boolean"},path:{type:"string"},message:{type:"string"}}} });
   if (!exact(verification,["registered","clean","path","message"]) || verification.registered !== true || verification.clean !== true || verification.path !== path || typeof verification.message !== "string") return { cleaned:false,message:"Worktree registration and cleanliness could not be proven." };
-  const removal = await agent(`${common}\nThe guard proved ${path} is the exact registered clean disposable worktree. Remove it using ordinary 'git -C /Users/kky/dev/agent_skills worktree remove ${path}' without --force, then verify it is absent from 'git worktree list --porcelain'. Do not touch any other path.`, { label:label+"-remove",subagent_type:"daily-driver",schema:{type:"object",additionalProperties:false,required:["cleaned","path","message"],properties:{cleaned:{type:"boolean"},path:{type:"string"},message:{type:"string"}}} });
+  const removal = await agent(`${common}\nThe guard proved ${path} is the exact registered clean disposable worktree. Remove it using ordinary 'git -C /Users/kky/dev/agent_skills worktree remove ${path}' without --force, then verify it is absent from 'git worktree list --porcelain'. Do not touch any other path.`, { label:label+"-remove",subagent_type:"daily-driver",session_key:reviewerSession,schema:{type:"object",additionalProperties:false,required:["cleaned","path","message"],properties:{cleaned:{type:"boolean"},path:{type:"string"},message:{type:"string"}}} });
   if (!exact(removal,["cleaned","path","message"]) || removal.cleaned !== true || removal.path !== path || typeof removal.message !== "string") return { cleaned:false,message:"Ordinary worktree removal was not confirmed." };
   return { cleaned:true,message:removal.message };
 };
 
 const rawCandidate = await agent(`${common}
 Mode=${mode}. Invalid mode: perform no commands and return a blocked envelope. Otherwise fetch origin, record primary HEAD/origin-main/status, create a single disposable detached worktree directly under ${tempParent} from recorded origin/main, and do all work there. Live must block before candidate mutation unless primary is clean and HEAD==origin/main. Audit must not mutate primary or tracked candidate files. Live may commit only inside the disposable worktree; never push/deploy. Return base_commit and exact candidate_commit (base for unchanged audit).
-Inventory complete sources and compare cached coverage/tree hashes; review security/dependencies. For every mirrored skill, compare the upstream directory tree hash with the locked local tree hash: source commit movement alone is not a content update. In audit mode, put only actual differing skill trees awaiting live review in pending_updates; put commit/ref/lock movement with an unchanged mirrored tree in metadata_updates. rejected_updates is only for candidates that failed policy, security, dependency, or reviewer approval—never for intentionally unapplied audit freshness. Only governance docs/models/CLI/tests/workflow/config and selected skills/thirdparty mirrors may change. Validate using temporary AGENT_SKILLS_SKILL_TARGETS under a disposable directory, remove those targets, and never use production links. Return only the requested envelope with command-derived evidence and a message of 1-3 sentences.`, {label:"mirror-candidate",subagent_type:"daily-driver",schema:envelopeSchema});
+Inventory complete sources and compare cached coverage/tree hashes; review security/dependencies. For every mirrored skill, compare the upstream directory tree hash with the locked local tree hash: source commit movement alone is not a content update. In audit mode, put only actual differing skill trees awaiting live review in pending_updates; put commit/ref/lock movement with an unchanged mirrored tree in metadata_updates. rejected_updates is only for candidates that failed policy, security, dependency, or reviewer approval—never for intentionally unapplied audit freshness. Only governance docs/models/CLI/tests/workflow/config and selected skills/thirdparty mirrors may change. Validate using temporary AGENT_SKILLS_SKILL_TARGETS under a disposable directory, remove those targets, and never use production links. Return only the requested envelope with command-derived evidence and a message of 1-3 sentences.`, {label:"mirror-worker",subagent_type:"daily-driver",session_key:workerSession,schema:envelopeSchema});
 const candidateEvidence = evidenceFrom(rawCandidate);
 const candidate = normalizeEnvelope(rawCandidate);
 if (!candidate) {
@@ -69,28 +76,60 @@ if (candidate.status === "blocked" || !candidate.data.candidate_worktree || !com
   return candidate;
 }
 
-const rawReview = await agent(`${common}\nFresh independent review in exact worktree ${candidate.data.candidate_worktree}; base=${candidate.data.base_commit}; candidate=${candidate.data.candidate_commit}; mode=${mode}. Inspect that worktree directly. Verify these identities with git, verify audit unchanged or live allowlisted committed diff and primary baseline evidence, recheck drift, inventory/tree-hash coverage, security, dependencies, and temporary-target validation. Confirm pending_updates contains only upstream tree hashes differing from locked local trees, metadata_updates contains commit/ref/lock movement with unchanged trees, and rejected_updates contains only failed approval candidates. Do not edit/remove/push/deploy. Do not rely on candidate prose; derive findings from the worktree and commands.`, {label:"mirror-review",subagent_type:"daily-driver",schema:{type:"object",additionalProperties:false,required:["approved","message","findings","candidate_worktree","base_commit","candidate_commit"],properties:{approved:{type:"boolean"},message:{type:"string"},findings:{type:"array",items:{type:"string"}},candidate_worktree:{type:"string"},base_commit:{type:"string"},candidate_commit:{type:"string"}}}});
-const reviewValid = exact(rawReview,["approved","message","findings","candidate_worktree","base_commit","candidate_commit"]) && typeof rawReview.approved === "boolean" && typeof rawReview.message === "string" && strings(rawReview.findings) && rawReview.candidate_worktree === candidate.data.candidate_worktree && rawReview.base_commit === candidate.data.base_commit && rawReview.candidate_commit === candidate.data.candidate_commit;
-if (!reviewValid || !rawReview.approved) {
-  const cleanup = await cleanupCandidate(candidate.data.candidate_worktree,"rejected-candidate-cleanup");
-  const result = blocked("Mirror governance stopped at independent review; no deployment was authorized.", reviewValid ? rawReview.findings.join("; ") || "Reviewer rejected the candidate." : "Reviewer response was malformed.", candidate.data);
+const reviewSchema = {type:"object",additionalProperties:false,required:["approved","message","findings","fixRequests","candidate_worktree","base_commit","candidate_commit"],properties:{approved:{type:"boolean"},message:{type:"string",maxLength:500},findings:{type:"array",maxItems:8,items:{type:"string",maxLength:500}},fixRequests:{type:"array",maxItems:8,items:{type:"object",additionalProperties:false,required:["code","path"],properties:{code:{type:"string",enum:fixCodes},path:{type:"string",maxLength:240,pattern:"^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]*$"}}}},candidate_worktree:{type:"string"},base_commit:{type:"string"},candidate_commit:{type:"string"}}};
+const reviewCandidate = async (current, round) => agent(`${common}\nReview round ${round} in exact worktree ${current.data.candidate_worktree}; base=${current.data.base_commit}; candidate=${current.data.candidate_commit}; mode=${mode}. Inspect that worktree directly and derive all evidence from commands, not worker prose. Verify identities, audit immutability or the live allowlisted committed diff, primary baseline evidence, drift, inventory/tree-hash coverage, security, dependencies, and temporary-target validation. Confirm pending/metadata/rejected classification semantics. Do not edit, remove, push, or deploy. Return concise structured findings. For an auto-fixable rejection, encode every requested fix only as a fixRequests enum code and optional safe repo-relative path. If any issue cannot be represented by that vocabulary, return no fixRequests so the workflow blocks rather than forwarding prose.`, {label:"mirror-review",subagent_type:"daily-driver",session_key:reviewerSession,schema:reviewSchema});
+const validReview = (review, current) => exact(review,["approved","message","findings","fixRequests","candidate_worktree","base_commit","candidate_commit"]) && typeof review.approved === "boolean" && boundedText(review.message) && boundedFindings(review.findings) && validFixRequests(review.fixRequests) && (!review.approved || review.fixRequests.length === 0) && review.candidate_worktree === current.data.candidate_worktree && review.base_commit === current.data.base_commit && review.candidate_commit === current.data.candidate_commit;
+const sameBaseline = (left, right) => left.candidate_worktree === right.candidate_worktree && left.base_commit === right.base_commit && left.primary_head === right.primary_head && left.origin_main === right.origin_main && left.primary_clean === right.primary_clean;
+
+let current = candidate;
+if (mode === "audit" && current.data.candidate_commit !== current.data.base_commit) {
+  const cleanup = await cleanupCandidate(current.data.candidate_worktree,"audit-mutated-cleanup");
+  const result = blocked("Audit candidate was not immutable; no review or deployment was authorized.", "Audit candidate_commit must equal base_commit.", current.data);
+  result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
+  return result;
+}
+let review = await reviewCandidate(current, 0);
+let reviewValid = validReview(review, current);
+for (let fixRound = 1; mode === "live" && reviewValid && !review.approved && review.fixRequests.length > 0 && fixRound <= 2; fixRound++) {
+  // Only closed enum codes and validated safe paths cross the session boundary.
+  const feedback = JSON.stringify({fixRequests:review.fixRequests});
+  const rawRevision = await agent(`${common}\nRevision round ${fixRound}. Continue work only in the already-created candidate worktree. Reviewer findings (bounded JSON): ${feedback}. Verify the existing worktree/base/HEAD yourself. Fix only these findings, rerun temporary-target validation, and create a new candidate commit. Never push, deploy, apply production links, or change the primary checkout. Return the exact envelope with the same worktree and base and the new exact commit.`, {label:"mirror-worker-fix",subagent_type:"daily-driver",session_key:workerSession,schema:envelopeSchema});
+  const revision = normalizeEnvelope(rawRevision);
+  if (!revision || revision.status !== "complete" || !sameBaseline(revision.data, current.data) || revision.data.candidate_commit === current.data.candidate_commit) {
+    reviewValid = false;
+    break;
+  }
+  current = revision;
+  review = await reviewCandidate(current, fixRound);
+  reviewValid = validReview(review, current);
+}
+if (!reviewValid || !review.approved) {
+  const cleanup = await cleanupCandidate(current.data.candidate_worktree,"rejected-candidate-cleanup");
+  const result = blocked("Mirror governance stopped after bounded review; no deployment was authorized.", reviewValid ? (review.findings.join("; ") || "Reviewer rejected the candidate after the maximum two fix rounds.") : "Reviewer or revision response was malformed.", current.data);
+  result.data.rejected_updates = reviewValid ? review.findings.slice() : [];
   result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
   if (!cleanup.cleaned) result.data.human_actions.push("Inspect and safely remove the candidate worktree.");
   return result;
 }
 if (mode === "audit") {
-  const cleanup = await cleanupCandidate(candidate.data.candidate_worktree,"audit-cleanup");
-  candidate.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
-  if (!cleanup.cleaned) { candidate.status="blocked"; candidate.data.warnings.push("Audit worktree cleanup was not confirmed."); candidate.data.human_actions.push("Inspect and safely remove the candidate worktree."); }
-  return candidate;
+  if (current.data.candidate_commit !== current.data.base_commit) {
+    const cleanup = await cleanupCandidate(current.data.candidate_worktree,"audit-return-guard-cleanup");
+    const result = blocked("Audit candidate identity changed before return.", "Audit candidate_commit must equal base_commit.", current.data);
+    result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
+    return result;
+  }
+  const cleanup = await cleanupCandidate(current.data.candidate_worktree,"audit-cleanup");
+  current.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
+  if (!cleanup.cleaned) { current.status="blocked"; current.data.warnings.push("Audit worktree cleanup was not confirmed."); current.data.human_actions.push("Inspect and safely remove the candidate worktree."); }
+  return current;
 }
 
-const rawFinalizer = await agent(`${common}\nFinalize only reviewed worktree ${candidate.data.candidate_worktree}, base=${candidate.data.base_commit}, candidate=${candidate.data.candidate_commit}. Inspect that worktree directly. Reverify exact HEAD, allowlist, validation with temporary targets, primary still clean at origin/main, and update classification based on upstream-versus-locked tree hashes rather than source commit movement. On failure do not push/deploy. On success push the reviewed candidate commit to origin/main without force; then fast-forward the local primary checkout /Users/kky/dev/agent_skills and run apply/doctor locally for Macmini. Next SSH only to macbook, require its checkout clean and fast-forwardable, fast-forward it, and run apply/doctor there. Never SSH to macmini or cf-macmini. Never reset/stash/force. Do not remove candidate worktree; the workflow performs guarded cleanup afterward. Return exact envelope, preserve the exact worktree/base/candidate identity, and keep message to 1-3 sentences.`,  {label:"mirror-finalizer",subagent_type:"daily-driver",schema:envelopeSchema});
+const rawFinalizer = await agent(`${common}\nThe candidate was approved in this same reviewer session. Finalize only exact reviewed worktree ${current.data.candidate_worktree}, base=${current.data.base_commit}, candidate=${current.data.candidate_commit}. Do not modify candidate content. Reverify exact HEAD and primary still clean at origin/main. On failure do not push/deploy. On success push exactly the reviewed commit to origin/main without force; fast-forward the local primary checkout and run apply/doctor locally; then SSH only to macbook, require clean and fast-forwardable, fast-forward it, and run apply/doctor there. Never reset/stash/force or SSH to macmini. Do not remove the candidate worktree. Return the exact envelope preserving identity.`, {label:"mirror-review-finalize",subagent_type:"daily-driver",session_key:reviewerSession,schema:envelopeSchema});
 const finalizer = normalizeEnvelope(rawFinalizer);
-const finalizerIdentityMatches = finalizer && finalizer.data.candidate_worktree === candidate.data.candidate_worktree && finalizer.data.base_commit === candidate.data.base_commit && finalizer.data.candidate_commit === candidate.data.candidate_commit;
-const cleanup = await cleanupCandidate(candidate.data.candidate_worktree,"finalizer-cleanup");
+const finalizerIdentityMatches = finalizer && sameBaseline(finalizer.data, current.data) && finalizer.data.candidate_commit === current.data.candidate_commit;
+const cleanup = await cleanupCandidate(current.data.candidate_worktree,"finalizer-cleanup");
 if (!finalizerIdentityMatches) {
-  const result = blocked("Mirror governance failed closed because finalization returned malformed output.", cleanup.cleaned ? "Candidate worktree was removed; inspect deployment evidence." : "Candidate cleanup was not confirmed; inspect remote and worktree state.", candidate.data);
+  const result = blocked("Mirror governance failed closed because finalization returned malformed output.", cleanup.cleaned ? "Candidate worktree was removed; inspect deployment evidence." : "Candidate cleanup was not confirmed; inspect remote and worktree state.", current.data);
   result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
   return result;
 }
