@@ -672,7 +672,7 @@ const {{ readFileSync }} = require('node:fs');
 (async () => {{
 const {{ runWorkflow, ConcurrencyLimiter }} = await import({json.dumps(runtime.as_uri())});
 const source = readFileSync({json.dumps(str(REPO / '.pi/workflows/agent-skills-mirrors.js'))}, 'utf8');
-const detail = (path) => ({{candidate_worktree:path,base_commit:'a'.repeat(40),candidate_commit:'a'.repeat(40),primary_head:'b'.repeat(40),origin_main:'a'.repeat(40),primary_clean:false,added_skills:[],removed_skills:[],updated_skills:[],rejected_updates:[],excluded_skills:[],deferred_skills:[],dependency_changes:[],validation:[],deployment:{{committed:false,pushed:false,macmini:'not-run',macbook:'not-run',cleanup:'not-confirmed'}},warnings:['blocked'],human_actions:['inspect']}});
+const detail = (path) => ({{candidate_worktree:path,base_commit:'a'.repeat(40),candidate_commit:'a'.repeat(40),primary_head:'b'.repeat(40),origin_main:'a'.repeat(40),primary_clean:false,added_skills:[],removed_skills:[],updated_skills:[],pending_updates:[],metadata_updates:[],rejected_updates:[],excluded_skills:[],deferred_skills:[],dependency_changes:[],validation:[],deployment:{{committed:false,pushed:false,macmini:'not-run',macbook:'not-run',cleanup:'not-confirmed'}},warnings:['blocked'],human_actions:['inspect']}});
 async function execute(kind) {{
   const calls=[]; const path='/tmp/agent-skills-mirrors-worktrees/candidate-1'; const runMode=kind==='identity'?'live':'audit';
   const result=await runWorkflow(source, {{cwd:{json.dumps(str(REPO))}, limiter:new ConcurrencyLimiter(2), replayEnabled:false, args:{{mode:runMode}}, runAgent:async(call)=>{{
@@ -715,6 +715,11 @@ console.log(JSON.stringify({{malformed:await execute('malformed'),blocked:await 
         self.assertEqual(identity["value"]["data"]["candidate_commit"], "a" * 40)
         self.assertEqual(identity["value"]["data"]["deployment"]["cleanup"], "removed")
         self.assertEqual(set(identity["value"]), {"status", "message", "data"})
+        for case in output.values():
+            self.assertIn("pending_updates", case["value"]["data"])
+            self.assertIn("metadata_updates", case["value"]["data"])
+            self.assertIsInstance(case["value"]["data"]["pending_updates"], list)
+            self.assertIsInstance(case["value"]["data"]["metadata_updates"], list)
         self.assertTrue(all(call["type"] == "daily-driver" for case in output.values() for call in case["calls"]), output)
 
 
