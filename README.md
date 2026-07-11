@@ -1,13 +1,15 @@
 # agent_skills
 
-One place to manage global agent skills across Codex, Pi, and Claude Code. Every skill is either a **mirror** (exact copy of an upstream directory, replaced wholesale on update) or **owned** (this repo is authoritative). Runtime dirs (`~/.agents/skills`, `~/.claude/skills`) are flat symlinks into `skills/`.
+One place to manage global agent skills across Codex, Pi, and Claude Code. Every skill is either a **mirror** (exact upstream directory) or **owned** (this repo is authoritative). Orthogonally, mirror governance is **source** mode (an agent inventories the whole source and applies policy) or **skill** mode (one explicitly selected skill). See [`THIRDPARTY_SOURCES.md`](THIRDPARTY_SOURCES.md) and the validated cache [`source-mirrors.json`](source-mirrors.json). Runtime dirs (`~/.agents/skills`, `~/.claude/skills`) are flat symlinks into `skills/`.
 
 ```bash
 ./scripts/skills apply            # link skills into the runtime dirs
 ./scripts/skills doctor           # health report (--remote checks upstreams)
 ./scripts/skills update <skill>   # check upstream delta; --apply replaces a mirror, --record-review logs an owned review
 ./scripts/skills verify [skill]   # run declared dependency checks (incl. reverse dependents)
-./scripts/skills list             # skill inventory: ownership, sources, dependencies
+./scripts/skills list             # ownership, mirror mode, sources, dependencies
+./scripts/skills source inventory <source> --format json  # upstream facts only
+./scripts/skills source report [source] --format json      # cached policy decisions
 ```
 
 Operating rules for agents: [`AGENTS.md`](AGENTS.md).
@@ -54,17 +56,12 @@ Mirrors of [mattpocock/skills](https://github.com/mattpocock/skills):
 
 - **[playwright-cli](skills/thirdparty/playwright-cli/SKILL.md)** *(mirror of [microsoft/playwright-cli](https://github.com/microsoft/playwright-cli))* — Automate browser interactions and work with Playwright tests.
 - **[chatgpt](skills/chatgpt/SKILL.md)** *(owned; depends on playwright-cli)* — Drive ChatGPT web: model/reasoning selection, Projects, Deep Research, harvesting results.
-- **[opencli-usage](skills/thirdparty/opencli-usage/SKILL.md)** — Top-level map of the `opencli` CLI: adapters, flags, output formats.
-- **[opencli-adapter-author](skills/thirdparty/opencli-adapter-author/SKILL.md)** — Write an OpenCLI adapter for a new site, from recon to verify.
-- **[opencli-autofix](skills/thirdparty/opencli-autofix/SKILL.md)** — Fix a broken OpenCLI adapter from a trace, retry, and file the upstream issue.
-- **[smart-search](skills/thirdparty/smart-search/SKILL.md)** — OpenCLI-based search router, tuned for site-specific and Chinese-language queries.
-
-The three `opencli-*` skills and `smart-search` are mirrors of [jackwener/opencli](https://github.com/jackwener/opencli).
-
 ### Data science
 
 - **[kaggle](skills/datascience/kaggle/SKILL.md)** *(owned; depends on playwright-cli and the `kaggle` CLI)* — Kaggle competition operations: intake, validation design, leakage control, submissions.
 
 ### Automation
 
-- **[pievo](skills/thirdparty/pievo/SKILL.md)** *(mirror of [kky42/pievo](https://github.com/kky42/pievo))* — Operate pievo, the durable loop runner, through its JSON CLI.
+- **[pievo](skills/thirdparty/pievo/SKILL.md)** *(source-policy mirror of [kky42/pievo](https://github.com/kky42/pievo))* — Operate pievo, the durable loop runner, through its JSON CLI.
+
+The unregistered Pievo loop config at [`pievo/agent-skills-mirrors.yaml`](pievo/agent-skills-mirrors.yaml) schedules the `daily-driver`-only workflow at 07:00 Asia/Shanghai, at most once and $10 per day. It defaults to audit for the first trial; switch to live only after a successful audit. Registration/activation is intentionally manual.

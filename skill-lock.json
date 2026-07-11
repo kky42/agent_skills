@@ -73,22 +73,6 @@
         "syncedAt": "2026-07-10T09:10:00.092004Z"
       }
     },
-    "opencli-adapter-author": {
-      "mirror": {
-        "resolvedCommit": "6129bb3953d5eebd8dd67f96802b320c723f50ca",
-        "sourcePath": "skills/opencli-adapter-author",
-        "treeHash": "sha256:7c8cdc81a2ef4cb26ef16104dba3c755663eb063ef47802ec076126d736ec59b",
-        "syncedAt": "2026-07-10T09:10:05.310199Z"
-      }
-    },
-    "opencli-autofix": {
-      "mirror": {
-        "resolvedCommit": "6129bb3953d5eebd8dd67f96802b320c723f50ca",
-        "sourcePath": "skills/opencli-autofix",
-        "treeHash": "sha256:5efd45f0f96af58a974d6405bd3c275370d53d715fc5bca82317e206de4f55af",
-        "syncedAt": "2026-07-10T09:10:09.709497Z"
-      }
-    },
     "pievo": {
       "mirror": {
         "resolvedCommit": "a285f2eed65c542c49d2177924ac52ebf205649e",
@@ -207,22 +191,6 @@
         "sourcePath": "skills/engineering/to-tickets",
         "treeHash": "sha256:606a1aef0e7b512936da5cbb7432a645a6ef785efad1b455c8655f0f021f7468",
         "syncedAt": "2026-07-10T09:11:43.460729Z"
-      }
-    },
-    "opencli-usage": {
-      "mirror": {
-        "resolvedCommit": "6129bb3953d5eebd8dd67f96802b320c723f50ca",
-        "sourcePath": "skills/opencli-usage",
-        "treeHash": "sha256:9a13db1660c92c118784924f8caf38f61b96397057abf71bfbd7356a52e0329d",
-        "syncedAt": "2026-07-10T09:49:37.309529Z"
-      }
-    },
-    "smart-search": {
-      "mirror": {
-        "resolvedCommit": "6129bb3953d5eebd8dd67f96802b320c723f50ca",
-        "sourcePath": "skills/smart-search",
-        "treeHash": "sha256:0dba6ceeabec2cb3073bb75b7debe59c2aabed2f00b558bc3712364efb6aa819",
-        "syncedAt": "2026-07-10T09:49:37.723111Z"
       }
     },
     "kaggle": {

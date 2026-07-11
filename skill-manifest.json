@@ -6,11 +6,6 @@
       "url": "https://github.com/mattpocock/skills.git",
       "defaultRef": "origin/HEAD"
     },
-    "jackwener/opencli": {
-      "kind": "git",
-      "url": "https://github.com/jackwener/opencli.git",
-      "defaultRef": "origin/HEAD"
-    },
     "krzysztofdudek/ResearcherSkill": {
       "kind": "git",
       "url": "https://github.com/krzysztofdudek/ResearcherSkill.git",
@@ -264,30 +259,6 @@
         }
       ]
     },
-    "opencli-adapter-author": {
-      "path": "skills/thirdparty/opencli-adapter-author",
-      "ownership": "mirror",
-      "mirror": {
-        "source": "jackwener/opencli",
-        "path": "skills/opencli-adapter-author"
-      }
-    },
-    "opencli-autofix": {
-      "path": "skills/thirdparty/opencli-autofix",
-      "ownership": "mirror",
-      "mirror": {
-        "source": "jackwener/opencli",
-        "path": "skills/opencli-autofix"
-      }
-    },
-    "opencli-usage": {
-      "path": "skills/thirdparty/opencli-usage",
-      "ownership": "mirror",
-      "mirror": {
-        "source": "jackwener/opencli",
-        "path": "skills/opencli-usage"
-      }
-    },
     "pievo": {
       "path": "skills/thirdparty/pievo",
       "ownership": "mirror",
@@ -346,14 +317,6 @@
       "mirror": {
         "source": "mattpocock/skills",
         "path": "skills/engineering/setup-matt-pocock-skills"
-      }
-    },
-    "smart-search": {
-      "path": "skills/thirdparty/smart-search",
-      "ownership": "mirror",
-      "mirror": {
-        "source": "jackwener/opencli",
-        "path": "skills/smart-search"
       }
     },
     "tdd": {

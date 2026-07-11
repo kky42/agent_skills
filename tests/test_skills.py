@@ -52,9 +52,23 @@ class Fixture(unittest.TestCase):
         self.root = self.base / "workspace"
         self.root.mkdir()
 
-    def base_files(self, manifest: dict, lock: dict | None = None) -> None:
+    def base_files(self, manifest: dict, lock: dict | None = None, source_mirrors: dict | None = None) -> None:
         write_json(self.root / "skill-manifest.json", manifest)
         write_json(self.root / "skill-lock.json", lock or {"schemaVersion": 1, "skills": {}})
+        if source_mirrors is None:
+            policies = {}
+            for name, entry in manifest.get("skills", {}).items():
+                mirror = entry.get("mirror") if isinstance(entry, dict) else None
+                if not mirror:
+                    continue
+                policies[mirror["source"]] = {
+                    "mode": "skill",
+                    "policy": "Explicit fixture skill.",
+                    "resolvedCommit": "0" * 40,
+                    "decisions": [{"name": name, "path": mirror["path"], "decision": "include", "reason": "fixture", "treeHash": "sha256:" + "0" * 64}],
+                }
+            source_mirrors = {"schemaVersion": 1, "sources": policies}
+        write_json(self.root / "source-mirrors.json", source_mirrors)
 
     def invoke(self, *arguments: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:
         environment = dict(os.environ)
@@ -120,6 +134,168 @@ class ModelValidationTests(Fixture):
         dependencies, reverse = module["dependency_graph"](catalog)
         self.assertEqual(dependencies["owned"], {"mirror"})
         self.assertEqual(reverse["mirror"], {"owned"})
+
+    def test_source_and_skill_mirror_modes_are_orthogonal_to_ownership(self) -> None:
+        module, load_catalog = self.load()
+        write_skill(self.root / "skills" / "source-selected", "source-selected")
+        write_skill(self.root / "skills" / "skill-selected", "skill-selected")
+        manifest = {
+            "schemaVersion": 1,
+            "sources": {
+                "example/source": {"kind": "git", "url": "https://example.invalid/source.git"},
+                "example/skill": {"kind": "git", "url": "https://example.invalid/skill.git"},
+            },
+            "skills": {
+                "source-selected": {"ownership": "mirror", "mirror": {"source": "example/source", "path": "skills/source-selected"}},
+                "skill-selected": {"ownership": "mirror", "mirror": {"source": "example/skill", "path": "skills/skill-selected"}},
+            },
+        }
+        policies = {
+            "schemaVersion": 1,
+            "sources": {
+                "example/source": {
+                    "mode": "source",
+                    "policy": "Include stable, general-purpose skills.",
+                    "resolvedCommit": "a" * 40,
+                    "decisions": [{"name": "source-selected", "path": "skills/source-selected", "decision": "include", "reason": "stable and general", "treeHash": "sha256:" + "0" * 64}],
+                },
+                "example/skill": {
+                    "mode": "skill",
+                    "policy": "Track only the explicitly selected skill.",
+                    "resolvedCommit": "b" * 40,
+                    "decisions": [{"name": "skill-selected", "path": "skills/skill-selected", "decision": "include", "reason": "explicit selection", "treeHash": "sha256:" + "1" * 64}],
+                },
+            },
+        }
+        self.base_files(manifest, source_mirrors=policies)
+        catalog = load_catalog(self.root)
+        self.assertEqual(catalog.mirror_modes["source-selected"], "source")
+        self.assertEqual(catalog.mirror_modes["skill-selected"], "skill")
+        listed = self.invoke("list", "--format", "json")
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        rows = {row["name"]: row for row in json.loads(listed.stdout)["skills"]}
+        self.assertEqual(rows["source-selected"]["mirrorMode"], "source")
+        self.assertEqual(rows["skill-selected"]["mirrorMode"], "skill")
+
+    def test_source_policy_cache_validation_and_report(self) -> None:
+        module, load_catalog = self.load()
+        write_skill(self.root / "skills" / "mirror", "mirror")
+        manifest = {
+            "schemaVersion": 1,
+            "sources": {"example/source": {"kind": "git", "url": "https://example.invalid/source.git"}},
+            "skills": {"mirror": {"ownership": "mirror", "mirror": {"source": "example/source", "path": "skills/mirror"}}},
+        }
+        invalid = {"schemaVersion": 1, "sources": {"example/source": {"mode": "automatic", "policy": "x", "decisions": []}}}
+        self.base_files(manifest, source_mirrors=invalid)
+        with self.assertRaisesRegex(module["CliError"], "mode must be source or skill"):
+            load_catalog(self.root)
+
+        valid = {"schemaVersion": 1, "sources": {"example/source": {"mode": "source", "policy": "Agent decides.", "resolvedCommit": "a" * 40, "decisions": [{"name": "mirror", "path": "skills/mirror", "decision": "include", "reason": "selected", "treeHash": "sha256:" + "0" * 64}, {"name": "later", "path": "skills/later", "decision": "defer", "reason": "in progress"}]}}}
+        self.base_files(manifest, source_mirrors=valid)
+        report = self.invoke("source", "report", "example/source", "--format", "json")
+        self.assertEqual(report.returncode, 0, report.stderr)
+        data = json.loads(report.stdout)
+        self.assertEqual(data["sources"][0]["mode"], "source")
+        self.assertEqual(data["sources"][0]["counts"], {"defer": 1, "exclude": 0, "include": 1})
+
+    def test_source_cache_rejects_malformed_hashes_duplicates_and_missing_include_hash(self) -> None:
+        module, load_catalog = self.load()
+        write_skill(self.root / "skills" / "mirror", "mirror")
+        manifest = {"schemaVersion": 1, "sources": {"example/source": {"kind": "git", "url": "https://example.invalid/source.git"}}, "skills": {"mirror": {"ownership": "mirror", "mirror": {"source": "example/source", "path": "skills/mirror"}}}}
+        policies = {"schemaVersion": 1, "sources": {"example/source": {"mode": "source", "policy": "Agent decides.", "resolvedCommit": "abcdef0", "decisions": [
+            {"name": "mirror", "path": "skills/mirror", "decision": "include", "reason": "selected"},
+            {"name": "other", "path": "skills/mirror", "decision": "exclude", "reason": "duplicate path", "treeHash": "sha256:no"},
+        ]}}}
+        self.base_files(manifest, source_mirrors=policies)
+        with self.assertRaises(module["CliError"]) as raised:
+            load_catalog(self.root)
+        message = str(raised.exception)
+        self.assertIn("resolvedCommit must be a 40-hex git SHA-1", message)
+        self.assertIn("path must be unique", message)
+        self.assertIn("included decision requires treeHash", message)
+        self.assertIn("treeHash must be sha256 plus 64 hex", message)
+
+    def test_source_report_surfaces_inventory_coverage_without_making_decisions(self) -> None:
+        write_skill(self.root / "skills" / "mirror", "mirror")
+        upstream = self.base / "upstream-report"
+        git_init(upstream)
+        write_skill(upstream / "skills" / "mirror", "mirror")
+        write_skill(upstream / "skills" / "new", "new")
+        commit = git_commit(upstream, "inventory")
+        inventory = self.base / "inventory.json"
+        policies = {"schemaVersion": 1, "sources": {"example/source": {"mode": "source", "policy": "Agent decides.", "resolvedCommit": commit, "decisions": [{"name": "mirror", "path": "skills/mirror", "decision": "include", "reason": "selected", "treeHash": "sha256:" + "0" * 64}]}}}
+        manifest = {"schemaVersion": 1, "sources": {"example/source": {"kind": "git", "url": str(upstream), "defaultRef": "origin/main"}}, "skills": {"mirror": {"ownership": "mirror", "mirror": {"source": "example/source", "path": "skills/mirror"}}}}
+        self.base_files(manifest, source_mirrors=policies)
+        discovered = self.invoke("source", "inventory", "example/source", "--format", "json")
+        self.assertEqual(discovered.returncode, 0, discovered.stderr)
+        inventory.write_text(discovered.stdout + "\n", encoding="utf-8")
+        report = self.invoke("source", "report", "example/source", "--inventory", str(inventory), "--format", "json")
+        self.assertEqual(report.returncode, 0, report.stderr)
+        coverage = json.loads(report.stdout)["sources"][0]["coverage"]
+        self.assertEqual(coverage["missingDecisions"], [{"name": "new", "path": "skills/new"}])
+        self.assertEqual(coverage["extraDecisions"], [])
+        self.assertEqual(len(coverage["treeHashMismatches"]), 1)
+        self.assertEqual(coverage["treeHashMismatches"][0]["path"], "skills/mirror")
+
+    def test_skill_mode_report_ignores_siblings_but_reports_selected_removal(self) -> None:
+        write_skill(self.root / "skills" / "selected", "selected")
+        upstream = self.base / "upstream-skill-mode"
+        git_init(upstream)
+        write_skill(upstream / "skills" / "selected", "selected")
+        write_skill(upstream / "skills" / "sibling", "sibling")
+        commit = git_commit(upstream, "inventory")
+        manifest = {"schemaVersion": 1, "sources": {"example/source": {"kind": "git", "url": str(upstream), "defaultRef": "origin/main"}}, "skills": {"selected": {"ownership": "mirror", "mirror": {"source": "example/source", "path": "skills/selected"}}}}
+        policies = {"schemaVersion": 1, "sources": {"example/source": {"mode": "skill", "policy": "Track selected only.", "resolvedCommit": commit, "decisions": [{"name": "selected", "path": "skills/selected", "decision": "include", "reason": "selected", "treeHash": "sha256:" + "0" * 64}]}}}
+        self.base_files(manifest, source_mirrors=policies)
+        result = self.invoke("source", "inventory", "example/source", "--format", "json")
+        inventory = self.base / "skill-inventory.json"
+        inventory.write_text(result.stdout, encoding="utf-8")
+        report = self.invoke("source", "report", "example/source", "--inventory", str(inventory), "--format", "json")
+        coverage = json.loads(report.stdout)["sources"][0]["coverage"]
+        self.assertEqual(coverage["missingDecisions"], [])
+        self.assertEqual(coverage["extraDecisions"], [])
+        self.assertEqual(len(coverage["treeHashMismatches"]), 1)
+
+        payload = json.loads(inventory.read_text(encoding="utf-8"))
+        payload["skills"] = [skill for skill in payload["skills"] if skill["name"] == "sibling"]
+        write_json(inventory, payload)
+        removed = self.invoke("source", "report", "example/source", "--inventory", str(inventory), "--format", "json")
+        coverage = json.loads(removed.stdout)["sources"][0]["coverage"]
+        self.assertEqual(coverage["missingDecisions"], [])
+        self.assertEqual(coverage["extraDecisions"], [{"name": "selected", "path": "skills/selected"}])
+        self.assertEqual(coverage["treeHashMismatches"], [])
+
+    def test_source_inventory_preserves_odd_valid_git_paths(self) -> None:
+        upstream = self.base / "upstream-odd-path"
+        git_init(upstream)
+        write_skill(upstream / "skills" / "odd\nparent" / "normal-skill", "normal-skill")
+        git_commit(upstream, "odd path")
+        self.base_files({"schemaVersion": 1, "sources": {"example/source": {"kind": "git", "url": str(upstream), "defaultRef": "origin/main"}}, "skills": {}})
+        result = self.invoke("source", "inventory", "example/source", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        inventory = json.loads(result.stdout)
+        self.assertEqual(inventory["skills"][0]["path"], "skills/odd\nparent/normal-skill")
+
+    def test_source_inventory_rejects_root_and_symlink_skill_files(self) -> None:
+        upstream = self.base / "upstream-unsafe"
+        git_init(upstream)
+        (upstream / "SKILL.md").write_text("---\nname: root\ndescription: test\n---\n", encoding="utf-8")
+        git_commit(upstream, "root")
+        self.base_files({"schemaVersion": 1, "sources": {"example/source": {"kind": "git", "url": str(upstream), "defaultRef": "origin/main"}}, "skills": {}})
+        root = self.invoke("source", "inventory", "example/source", "--format", "json")
+        self.assertNotEqual(root.returncode, 0)
+        self.assertIn("root-level SKILL.md is not supported", root.stdout)
+
+        (upstream / "SKILL.md").unlink()
+        target = upstream / "TARGET.md"
+        target.write_text("---\nname: linked\ndescription: test\n---\n", encoding="utf-8")
+        linked = upstream / "skills" / "linked"
+        linked.mkdir(parents=True)
+        os.symlink("../../TARGET.md", linked / "SKILL.md")
+        git_commit(upstream, "symlink")
+        symlink = self.invoke("source", "inventory", "example/source", "--format", "json")
+        self.assertNotEqual(symlink.returncode, 0)
+        self.assertIn("SKILL.md must be a regular file", symlink.stdout)
 
     def test_mirror_rejects_relations(self) -> None:
         module, load_catalog = self.load()
@@ -255,7 +431,7 @@ class ModelValidationTests(Fixture):
         with self.assertRaises(module["CliError"]) as raised:
             load_catalog(self.root)
         message = str(raised.exception)
-        self.assertIn("lastReviewedCommit must be at least 7", message)
+        self.assertIn("lastReviewedCommit must be a 40-hex git SHA-1", message)
         self.assertIn("reviewedAt must be an ISO date-time", message)
         self.assertIn("note must be a non-empty string", message)
 
@@ -484,6 +660,62 @@ class UpdateTests(Fixture):
         self.assertNotEqual(applied.returncode, 0)
         self.assertIn("refusing to replace dirty mirror path", applied.stdout)
         self.assertTrue((target_dir / "LOCAL.secret").exists())
+
+
+class WorkflowContractTests(unittest.TestCase):
+    def test_malformed_normalization_and_blocked_candidate_cleanup_contract(self) -> None:
+        runtime = Path("/Users/kky/dev/pi/pi-flow/dist/runtime.js")
+        if not runtime.exists():
+            self.skipTest("pi-flow runtime is not available")
+        script = f"""
+const {{ readFileSync }} = require('node:fs');
+(async () => {{
+const {{ runWorkflow, ConcurrencyLimiter }} = await import({json.dumps(runtime.as_uri())});
+const source = readFileSync({json.dumps(str(REPO / '.pi/workflows/agent-skills-mirrors.js'))}, 'utf8');
+const detail = (path) => ({{candidate_worktree:path,base_commit:'a'.repeat(40),candidate_commit:'a'.repeat(40),primary_head:'b'.repeat(40),origin_main:'a'.repeat(40),primary_clean:false,added_skills:[],removed_skills:[],updated_skills:[],rejected_updates:[],excluded_skills:[],deferred_skills:[],dependency_changes:[],validation:[],deployment:{{committed:false,pushed:false,macmini:'not-run',macbook:'not-run',cleanup:'not-confirmed'}},warnings:['blocked'],human_actions:['inspect']}});
+async function execute(kind) {{
+  const calls=[]; const path='/tmp/agent-skills-mirrors-worktrees/candidate-1'; const runMode=kind==='identity'?'live':'audit';
+  const result=await runWorkflow(source, {{cwd:{json.dumps(str(REPO))}, limiter:new ConcurrencyLimiter(2), replayEnabled:false, args:{{mode:runMode}}, runAgent:async(call)=>{{
+    calls.push({{label:call.label,type:call.subagentType}});
+    if (call.label==='mirror-candidate') {{
+      if (kind==='malformed') return {{unexpected:true}};
+      if (kind==='unsafe') return {{status:'blocked',message:'bad path',data:detail('/tmp/agent-skills-mirrors-worktrees/bad path')}};
+      const value=detail(path); value.primary_clean=kind==='identity';
+      return {{status:kind==='identity'?'complete':'blocked',message:'candidate',data:value}};
+    }}
+    if (call.label==='mirror-review') return {{approved:true,message:'approved',findings:[],candidate_worktree:path,base_commit:'a'.repeat(40),candidate_commit:'a'.repeat(40)}};
+    if (call.label==='mirror-finalizer') {{ const value=detail(path); value.primary_clean=true; value.candidate_commit='c'.repeat(40); return {{status:'complete',message:'wrong identity',data:value}}; }}
+    if (call.label.endsWith('-verify')) return {{registered:true,clean:true,path,message:'verified'}};
+    if (call.label.endsWith('-remove')) return {{cleaned:true,path,message:'removed'}};
+    throw new Error('unexpected call '+call.label);
+  }}}});
+  return {{value:result.result,calls,agentCount:result.agentCount}};
+}}
+console.log(JSON.stringify({{malformed:await execute('malformed'),blocked:await execute('blocked'),unsafe:await execute('unsafe'),identity:await execute('identity')}}));
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+        process = subprocess.run(["node", "-e", script], text=True, capture_output=True)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        output = json.loads(process.stdout)
+        malformed = output["malformed"]
+        self.assertEqual(malformed["agentCount"], 1)
+        self.assertEqual(malformed["value"]["status"], "blocked")
+        self.assertEqual(set(malformed["value"]), {"status", "message", "data"})
+        blocked = output["blocked"]
+        self.assertEqual(blocked["agentCount"], 3)
+        self.assertEqual(blocked["value"]["data"]["deployment"]["cleanup"], "removed")
+        self.assertEqual(set(blocked["value"]), {"status", "message", "data"})
+        unsafe = output["unsafe"]
+        self.assertEqual(unsafe["agentCount"], 1)
+        self.assertEqual(unsafe["value"]["data"]["candidate_worktree"], "")
+        self.assertEqual(unsafe["value"]["data"]["deployment"]["cleanup"], "not-confirmed")
+        identity = output["identity"]
+        self.assertEqual(identity["agentCount"], 5)
+        self.assertEqual(identity["value"]["status"], "blocked")
+        self.assertEqual(identity["value"]["data"]["candidate_commit"], "a" * 40)
+        self.assertEqual(identity["value"]["data"]["deployment"]["cleanup"], "removed")
+        self.assertEqual(set(identity["value"]), {"status", "message", "data"})
+        self.assertTrue(all(call["type"] == "daily-driver" for case in output.values() for call in case["calls"]), output)
 
 
 class HelperTests(unittest.TestCase):

@@ -1,42 +1,23 @@
 # Skill Management
 
-This context defines who is authoritative for skill content and how external influence is represented without weakening local ownership.
-
 ## Language
 
-**Mirror skill**:
-A skill whose complete content is an exact materialization of one authoritative upstream directory.
-_Avoid_: Pure third-party skill, vendored skill
+**Mirror skill**: exact materialization of one authoritative upstream git directory. Local drift is an integrity error.
 
-**Owned skill**:
-A skill whose final content is authoritative in this repository, regardless of whether it is original or informed by external material.
-_Avoid_: Personal skill, locally patched third-party skill
+**Owned skill**: locally authoritative content, even when informed by external sources.
 
-**Content source**:
-External material that informed a declared part or concern of an owned skill and whose changes are candidates for selective adoption.
-_Avoid_: Merge source, upstream branch
+**Source mirror**: governance mode where an agent discovers a whole source and decides which independent skills to include, exclude, or defer.
 
-**Reference**:
-External material worth re-reviewing but not presumed to own or correspond to local content.
-_Avoid_: Dependency, content source
+**Skill mirror**: governance mode tracking one explicitly selected upstream skill; upstream removal is reported while the local copy is retained.
 
-**Skill dependency**:
-Another skill required for an owned skill to operate correctly.
-_Avoid_: Content source
+**Content source / reference**: scoped external influence on an owned skill, reviewed selectively rather than merged.
 
-**Tool dependency**:
-A package, plugin, or command required for an owned skill to operate correctly.
-_Avoid_: Skill-owned content
+**Skill dependency / tool dependency**: runtime requirements represented by declared edges and verification commands. Textual references and reverse dependents must also be reviewed.
 
-**Source review**:
-An evaluation of source changes that records which relevant changes were adopted or skipped while preserving the owned skill as authority.
-_Avoid_: Merge, sync
-
-**Review scope**:
-The upstream paths and local concerns that define which source changes deserve evaluation for an owned skill.
-_Avoid_: Whole upstream repository
+**Decision cache**: `source-mirrors.json`, containing agent-made policy outcomes and supported commit/tree evidence. It is not an auto-sync specification.
 
 ## Decisions
 
-**Local authority for owned skills** (2026-07-10):
-We classify skills only as mirrors or owned: mirrors are exact single-source copies replaced from upstream, while this repository remains authoritative for every owned skill. External changes to owned skills are reviewed within declared scopes and selectively adapted, never merged wholesale, because source provenance does not grant upstream authority and unrelated source changes must not enter local content.
+**Local authority for owned skills** (2026-07-10): ownership has only `mirror` and `owned`. Owned skills never receive wholesale upstream trees.
+
+**Orthogonal mirror governance** (2026-07-11): source versus skill mirror describes discovery and selection, not ownership. Source-mirror agents inventory the whole source, apply documented policy, review security and dependency impact, then invoke deterministic CLI primitives. Skill mirrors retain/report when removed upstream. No directory heuristic or structural auto-sync algorithm makes policy decisions.

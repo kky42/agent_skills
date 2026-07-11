@@ -8,10 +8,11 @@ Operating rules for this repo — the source of truth for the user's global agen
 - Every skill is exactly one of:
   - **mirror** — an exact, replaceable copy of one upstream git directory. Upstream is authoritative: never edit a mirror locally, update by whole-directory replace only, and treat local drift as an integrity error. To customize a mirror, reclassify it as owned first.
   - **owned** — this repo is authoritative, whether the content is original or informed by sources. Never merge or apply an upstream tree into an owned skill; review scoped deltas and selectively adapt only in-scope changes.
-- `skill-manifest.json` declares sources, explicit ownership, and typed relations: `content-source`, `reference`, `skill-dependency`, `tool-dependency`.
+- Mirror governance is orthogonal to ownership: a **source mirror** inventories an entire source and lets an agent select skills by policy; a **skill mirror** tracks only one explicitly selected skill. Both selected skills still use `ownership: "mirror"`. See `THIRDPARTY_SOURCES.md`.
+- `skill-manifest.json` declares sources, explicit ownership, and typed relations: `content-source`, `reference`, `skill-dependency`, `tool-dependency`. `source-mirrors.json` is the validated persistent cache of agent policy decisions; directory layout never decides policy.
 - `skill-lock.json` records mirror sync state and the latest owned-source review receipt. Only `./scripts/skills` writes it.
 - Runtime skill dirs (`~/.agents/skills` and `~/.claude/skills`; override with `AGENT_SKILLS_SKILL_TARGETS`) hold flat symlinks into this repo. Never edit skills through runtime links.
-- One CLI: `./scripts/skills` with subcommands `apply`, `doctor`, `update`, `verify`, `list`.
+- One CLI: `./scripts/skills` with `apply`, `doctor`, `update`, `verify`, `list`, deterministic `source inventory|report`, and maintenance-only `prune-lock`. CLI source primitives report facts and cached decisions; they never select skills.
 - A skill's frontmatter `description` defines when it triggers and is **frozen**: change it only on an explicit user request. If an upstream mirror update changes it, surface the change and get approval rather than patching locally.
 - `npx skills add <source> --list` is for discovery only, never for updating.
 
@@ -25,7 +26,9 @@ Route every request onto exactly one branch, then run the validation battery bef
 2. Mirror: add the source and a `mirror` record to the manifest, copy the upstream skill directory to the declared path, commit that import, then run `./scripts/skills update <name> --apply` to make it byte-exact and record the lock baseline.
 3. `./scripts/skills apply`, then the validation battery.
 
-### 2. Update a skill
+### 2. Update mirrors
+
+For a source mirror, the agent inventories the entire source, applies `THIRDPARTY_SOURCES.md` and the source's cached policy, reviews prompt-injection/security and dependency impact, and only then invokes deterministic per-skill CLI primitives. Include stable/general skills, exclude repo-specific/personal/deprecated/redundant skills, and defer in-progress/uncertain skills. The agent may update source paths after reviewed upstream reorganizations; never implement structural auto-sync. For a skill mirror, check only the selected skill; if removed upstream, retain it and report the removal for human review.
 
 `update <target>` with no clear target: report candidates (`./scripts/skills doctor --remote`) and ask; never update everything implicitly.
 
@@ -33,7 +36,7 @@ Gates for any change: reproduce a real problem through the skill's own workflow 
 
 - **Mirror**: `./scripts/skills update <skill>`, review the reported delta (upstream description changes need user approval), then `--apply`. The path must be clean; `--apply` refuses owned skills.
 - **Owned**: `./scripts/skills update <skill> --relation <id> --keep-workdir`, diff the exported base/target trees, selectively adapt only in-scope changes, then record a receipt with `--record-review` — it must decide every relevant changed path exactly once (`accepted` needs `localPaths` + note, `skipped` needs a reason). Record the receipt even when everything was skipped, so rejected changes do not recur.
-- **Dependency** (`skill-dependency` / `tool-dependency`): update the target per its own ownership or update policy, then `./scripts/skills verify <skill>` — it covers reverse dependents.
+- **Dependency** (`skill-dependency` / `tool-dependency`): inspect declared edges, textual references, required commands/version checks, and reverse dependents. Review and report tool changes; never blindly upgrade to latest. Update the target per its own policy, then `./scripts/skills verify <skill>` — it covers declared reverse dependents.
 
 Report: target and ownership, reproduction evidence, accepted/skipped changes with reasons, lock movement, residual risks. Never call a controlled/fixture check a live end-to-end test.
 

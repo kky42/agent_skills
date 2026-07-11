@@ -38,9 +38,12 @@ from typing import Any
 
 MANIFEST_NAME = "skill-manifest.json"
 LOCK_NAME = "skill-lock.json"
+SOURCE_MIRRORS_NAME = "source-mirrors.json"
 RELATION_TYPES = {"content-source", "reference", "skill-dependency", "tool-dependency"}
 UPDATE_POLICIES = {"manual", "compatible", "latest", "pinned"}
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+GIT_SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
+SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 REPO_ROOT = Path(
     os.environ.get("AGENT_SKILLS_REPO_ROOT", Path(__file__).resolve().parents[1])
@@ -71,6 +74,8 @@ def run(command: list[str], *, cwd: Path | None = None) -> str:
 # --------------------------------------------------------------------------
 
 def frontmatter_name(skill_md: Path) -> str | None:
+    if skill_md.is_symlink() or not skill_md.is_file():
+        raise CliError(f"{skill_md}: SKILL.md must be a regular file, not a symlink")
     lines = skill_md.read_text(encoding="utf-8").splitlines()
     if not lines or lines[0].strip() != "---":
         return None
@@ -129,6 +134,8 @@ class Catalog:
     skills: dict[str, SkillRecord]
     manifest: dict[str, Any]
     lock: dict[str, Any]
+    source_mirrors: dict[str, Any]
+    mirror_modes: dict[str, str]
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -167,11 +174,13 @@ def load_catalog(root: Path | str | None = None, *, validate: bool = True) -> Ca
     root = Path(root).resolve() if root else REPO_ROOT
     manifest_path = root / MANIFEST_NAME
     lock_path = root / LOCK_NAME
-    for required in (manifest_path, lock_path):
+    source_mirrors_path = root / SOURCE_MIRRORS_NAME
+    for required in (manifest_path, lock_path, source_mirrors_path):
         if not required.exists():
             raise CliError(f"required model file is missing: {required}")
     manifest = load_json(manifest_path)
     lock = load_json(lock_path)
+    source_mirrors = load_json(source_mirrors_path)
     discovered = discover_skills(root)
 
     raw_sources = manifest.get("sources")
@@ -195,7 +204,15 @@ def load_catalog(root: Path | str | None = None, *, validate: bool = True) -> Ca
             relations=relations,
         )
 
-    catalog = Catalog(root=root, sources=sources, skills=skills, manifest=manifest, lock=lock)
+    policies = source_mirrors.get("sources") if isinstance(source_mirrors.get("sources"), dict) else {}
+    mirror_modes = {
+        name: str((policies.get((record.mirror or {}).get("source")) or {}).get("mode", ""))
+        for name, record in skills.items() if record.ownership == "mirror"
+    }
+    catalog = Catalog(
+        root=root, sources=sources, skills=skills, manifest=manifest, lock=lock,
+        source_mirrors=source_mirrors, mirror_modes=mirror_modes,
+    )
     if validate:
         errors = validate_catalog(catalog)
         if errors:
@@ -365,10 +382,10 @@ def _validate_lock(lock: dict[str, Any], catalog: Catalog) -> list[str]:
             missing = sorted(required - set(mirror))
             if missing:
                 errors.append(f"{label} mirror: missing fields {missing}")
-            if len(str(mirror.get("resolvedCommit", ""))) < 7:
-                errors.append(f"{label} mirror: resolvedCommit must be at least 7 characters")
-            if not str(mirror.get("treeHash", "")).startswith("sha256:"):
-                errors.append(f"{label} mirror: treeHash must be sha256")
+            if not isinstance(mirror.get("resolvedCommit"), str) or not GIT_SHA1_RE.fullmatch(mirror.get("resolvedCommit", "")):
+                errors.append(f"{label} mirror: resolvedCommit must be a 40-hex git SHA-1")
+            if not isinstance(mirror.get("treeHash"), str) or not SHA256_RE.fullmatch(mirror.get("treeHash", "")):
+                errors.append(f"{label} mirror: treeHash must be sha256 plus 64 hex")
             if "syncedAt" in mirror and not _valid_datetime(mirror.get("syncedAt")):
                 errors.append(f"{label} mirror: syncedAt must be an ISO date-time")
         relations = state.get("relations", {})
@@ -395,8 +412,8 @@ def _validate_lock(lock: dict[str, Any], catalog: Catalog) -> list[str]:
                 errors.append(f"{relation_label}: missing fields {missing}")
             if not str(relation_state.get("relationFingerprint", "")).startswith("sha256:"):
                 errors.append(f"{relation_label}: relationFingerprint must be sha256")
-            if len(str(relation_state.get("lastReviewedCommit", ""))) < 7:
-                errors.append(f"{relation_label}: lastReviewedCommit must be at least 7 characters")
+            if not isinstance(relation_state.get("lastReviewedCommit"), str) or not GIT_SHA1_RE.fullmatch(relation_state.get("lastReviewedCommit", "")):
+                errors.append(f"{relation_label}: lastReviewedCommit must be a 40-hex git SHA-1")
             if "reviewedAt" in relation_state and not _valid_datetime(relation_state.get("reviewedAt")):
                 errors.append(f"{relation_label}: reviewedAt must be an ISO date-time")
             errors += _validate_receipt_decisions(relation_state, relation_label)
@@ -426,6 +443,75 @@ def _cycle_errors(skills: dict[str, SkillRecord]) -> list[str]:
 
     for name in sorted(skills):
         visit(name)
+    return errors
+
+
+def _validate_source_mirrors(catalog: Catalog) -> list[str]:
+    model = catalog.source_mirrors
+    errors = _unknown(model, {"schemaVersion", "sources"}, SOURCE_MIRRORS_NAME)
+    if model.get("schemaVersion") != 1:
+        errors.append(f"{SOURCE_MIRRORS_NAME}: schemaVersion must be 1")
+    policies = model.get("sources")
+    if not isinstance(policies, dict):
+        return errors + [f"{SOURCE_MIRRORS_NAME}: sources must be an object"]
+    mirror_sources = {(record.mirror or {}).get("source") for record in catalog.skills.values() if record.ownership == "mirror"}
+    for source_id, policy in sorted(policies.items()):
+        label = f"{SOURCE_MIRRORS_NAME} source {source_id!r}"
+        if source_id not in catalog.sources:
+            errors.append(f"{label}: unknown source")
+        if not isinstance(policy, dict):
+            errors.append(f"{label}: expected an object")
+            continue
+        errors += _unknown(policy, {"mode", "policy", "resolvedCommit", "decisions"}, label)
+        if policy.get("mode") not in {"source", "skill"}:
+            errors.append(f"{label}: mode must be source or skill")
+        if not isinstance(policy.get("policy"), str) or not policy.get("policy"):
+            errors.append(f"{label}: policy must be a non-empty agent-readable string")
+        if not isinstance(policy.get("resolvedCommit"), str) or not GIT_SHA1_RE.fullmatch(policy.get("resolvedCommit", "")):
+            errors.append(f"{label}: resolvedCommit must be a 40-hex git SHA-1")
+        decisions = policy.get("decisions")
+        if not isinstance(decisions, list):
+            errors.append(f"{label}: decisions must be an array")
+            continue
+        seen_names: set[str] = set()
+        seen_paths: set[str] = set()
+        for index, decision in enumerate(decisions):
+            item = f"{label} decisions[{index}]"
+            if not isinstance(decision, dict):
+                errors.append(f"{item}: expected an object")
+                continue
+            errors += _unknown(decision, {"name", "path", "decision", "reason", "treeHash"}, item)
+            name, path = decision.get("name"), decision.get("path")
+            if not isinstance(name, str) or not name or name in seen_names:
+                errors.append(f"{item}: name must be non-empty and unique")
+            else:
+                seen_names.add(name)
+            if not _safe_path(path):
+                errors.append(f"{item}: path must be safe and relative")
+            elif path in seen_paths:
+                errors.append(f"{item}: path must be unique")
+            else:
+                seen_paths.add(path)
+            outcome = decision.get("decision")
+            if outcome not in {"include", "exclude", "defer"}: errors.append(f"{item}: decision must be include, exclude, or defer")
+            if not isinstance(decision.get("reason"), str) or not decision.get("reason"): errors.append(f"{item}: reason must be non-empty")
+            tree_hash = decision.get("treeHash")
+            if outcome == "include" and tree_hash is None:
+                errors.append(f"{item}: included decision requires treeHash")
+            if tree_hash is not None and (not isinstance(tree_hash, str) or not SHA256_RE.fullmatch(tree_hash)):
+                errors.append(f"{item}: treeHash must be sha256 plus 64 hex")
+        included = {
+            (d["name"], d["path"]) for d in decisions
+            if isinstance(d, dict) and d.get("decision") == "include"
+            and isinstance(d.get("name"), str) and isinstance(d.get("path"), str)
+        }
+        selected = {(name, (record.mirror or {}).get("path")) for name, record in catalog.skills.items() if record.ownership == "mirror" and (record.mirror or {}).get("source") == source_id}
+        if included != selected:
+            errors.append(f"{label}: included decisions must exactly match catalog mirrors; decisions={sorted(included)}, catalog={sorted(selected)}")
+        if policy.get("mode") == "skill" and len(included) != 1:
+            errors.append(f"{label}: skill mode must include exactly one selected skill")
+    missing = sorted(source for source in mirror_sources if source not in policies)
+    if missing: errors.append(f"{SOURCE_MIRRORS_NAME}: missing mirror source policies {missing}")
     return errors
 
 
@@ -498,6 +584,7 @@ def validate_catalog(catalog: Catalog) -> list[str]:
                     errors.append(f"{relation_label}: missing skill dependency {relation.get('skill')!r}")
 
     errors += _cycle_errors(catalog.skills)
+    errors += _validate_source_mirrors(catalog)
     errors += _validate_lock(catalog.lock, catalog)
     return errors
 
@@ -1581,6 +1668,7 @@ def cmd_list(catalog: Catalog, output_format: str) -> int:
                 "name": name,
                 "path": record.relative_path,
                 "ownership": record.ownership,
+                "mirrorMode": catalog.mirror_modes.get(name),
                 "source": source,
                 "sourceRelations": [r.get("id") for r in record.source_relations],
                 "dependsOn": sorted(dependencies.get(name, [])),
@@ -1597,7 +1685,125 @@ def cmd_list(catalog: Catalog, output_format: str) -> int:
             extras.append("depends: " + ", ".join(row["dependsOn"]))
         if row["usedBy"]:
             extras.append("used by: " + ", ".join(row["usedBy"]))
-        print(f"{row['name']:32} {row['ownership']:7} {origin}" + (f"  [{'; '.join(extras)}]" if extras else ""))
+        mode = f"/{row['mirrorMode']}" if row["mirrorMode"] else ""
+        print(f"{row['name']:32} {row['ownership'] + mode:14} {origin}" + (f"  [{'; '.join(extras)}]" if extras else ""))
+    return 0
+
+
+# --------------------------------------------------------------------------
+# source mirror deterministic primitives
+# --------------------------------------------------------------------------
+
+def load_inventory_report(path: str) -> dict[str, Any]:
+    report = load_json(Path(path))
+    if set(report) != {"source", "ref", "resolvedCommit", "skills"}:
+        raise CliError("inventory report must contain exactly source, ref, resolvedCommit, and skills")
+    if not isinstance(report.get("source"), str) or not isinstance(report.get("ref"), str) or not GIT_SHA1_RE.fullmatch(str(report.get("resolvedCommit", ""))):
+        raise CliError("inventory report has invalid source, ref, or resolvedCommit")
+    skills = report.get("skills")
+    if not isinstance(skills, list):
+        raise CliError("inventory report skills must be an array")
+    seen: set[tuple[str, str]] = set()
+    for item in skills:
+        if not isinstance(item, dict) or set(item) != {"name", "path", "treeHash"}:
+            raise CliError("inventory skill must contain exactly name, path, and treeHash")
+        if not isinstance(item.get("name"), str) or not item["name"] or not _safe_path(item.get("path")) or not isinstance(item.get("treeHash"), str) or not SHA256_RE.fullmatch(item["treeHash"]):
+            raise CliError("inventory skill has invalid name, path, or treeHash")
+        key = (item["name"], item["path"])
+        if key in seen: raise CliError("inventory report contains a duplicate skill")
+        seen.add(key)
+    return report
+
+
+def cmd_source_report(catalog: Catalog, source_id: str | None, inventory_path: str | None, output_format: str) -> int:
+    policies = catalog.source_mirrors.get("sources") or {}
+    selected = [source_id] if source_id else sorted(policies)
+    unknown = [item for item in selected if item not in policies]
+    if unknown:
+        raise CliError(f"unknown source mirror policy: {unknown[0]}")
+    inventory = load_inventory_report(inventory_path) if inventory_path else None
+    if inventory and (len(selected) != 1 or inventory["source"] != selected[0]):
+        raise CliError("--inventory source must match the single reported source")
+    rows = []
+    for item in selected:
+        policy = policies[item]
+        counts = {decision: 0 for decision in ("defer", "exclude", "include")}
+        for decision in policy["decisions"]:
+            counts[decision["decision"]] += 1
+        row = {"source": item, "mode": policy["mode"], "policy": policy["policy"], "resolvedCommit": policy.get("resolvedCommit"), "counts": counts, "decisions": policy["decisions"]}
+        if inventory:
+            decided = {(d["name"], d["path"]) for d in policy["decisions"]}
+            all_found = {(s["name"], s["path"]) for s in inventory["skills"]}
+            found = all_found if policy["mode"] == "source" else all_found & decided
+            inventory_by_key = {(s["name"], s["path"]): s for s in inventory["skills"]}
+            included_by_key = {(d["name"], d["path"]): d for d in policy["decisions"] if d["decision"] == "include"}
+            row["coverage"] = {
+                "inventoryCommit": inventory["resolvedCommit"],
+                "cacheMatchesInventoryCommit": policy.get("resolvedCommit") == inventory["resolvedCommit"],
+                "missingDecisions": [{"name": name, "path": path} for name, path in sorted(found - decided)],
+                "extraDecisions": [{"name": name, "path": path} for name, path in sorted(decided - all_found)],
+                "treeHashMismatches": [
+                    {"name": key[0], "path": key[1], "cachedTreeHash": decision["treeHash"], "inventoryTreeHash": inventory_by_key[key]["treeHash"]}
+                    for key, decision in sorted(included_by_key.items())
+                    if key in inventory_by_key and decision["treeHash"] != inventory_by_key[key]["treeHash"]
+                ],
+            }
+        rows.append(row)
+    report = {"sources": rows}
+    if output_format == "json":
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    else:
+        for row in rows:
+            print(f"{row['source']}  {row['mode']}  include={row['counts']['include']} exclude={row['counts']['exclude']} defer={row['counts']['defer']}  commit={row['resolvedCommit'] or '(none)'}")
+    return 0
+
+
+def cmd_source_inventory(catalog: Catalog, source_id: str, ref: str | None, output_format: str) -> int:
+    if source_id not in catalog.sources:
+        raise CliError(f"unknown source: {source_id}")
+    work = Path(tempfile.mkdtemp(prefix="skills-inventory-"))
+    try:
+        repo = clone_source(catalog, source_id, work)
+        target_ref = ref or catalog.sources[source_id].get("defaultRef") or "origin/HEAD"
+        commit = run(["git", "rev-parse", target_ref], cwd=repo)
+        process = subprocess.run(
+            ["git", "ls-tree", "-rz", "--name-only", commit], cwd=str(repo), capture_output=True
+        )
+        if process.returncode != 0:
+            raise CliError(f"failed to inventory source tree: {process.stderr.decode('utf-8', errors='replace').strip()}")
+        raw_paths = process.stdout.split(b"\0")
+        if raw_paths and raw_paths[-1] == b"": raw_paths.pop()
+        tracked = [raw.decode("utf-8", errors="surrogateescape") for raw in raw_paths]
+        if "SKILL.md" in tracked:
+            raise CliError("root-level SKILL.md is not supported by source inventory")
+        paths = [line for line in tracked if line.endswith("/SKILL.md")]
+        skills = []
+        for skill_md in sorted(paths):
+            path = str(PurePosixPath(skill_md).parent)
+            destination = work / "exports" / hashlib.sha256(path.encode()).hexdigest()
+            export_directory(repo, commit, path, destination)
+            skill_file = destination / "SKILL.md"
+            if skill_file.is_symlink() or not skill_file.is_file():
+                raise CliError(f"{path}/SKILL.md must be a regular file, not a symlink")
+            name = frontmatter_name(skill_file)
+            skills.append({"name": name, "path": path, "treeHash": folder_hash(destination)})
+        report = {"source": source_id, "ref": target_ref, "resolvedCommit": commit, "skills": skills}
+        if output_format == "json": print(json.dumps(report, ensure_ascii=True, sort_keys=True))
+        else:
+            print(f"{source_id} {target_ref} @ {commit}")
+            for skill in skills: print(f"{skill['name'] or '(invalid)'}\t{skill['path']}\t{skill['treeHash']}")
+        return 0
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def cmd_prune_lock(catalog: Catalog) -> int:
+    lock = deepcopy(catalog.lock)
+    states = lock.setdefault("skills", {})
+    removed = sorted(set(states) - set(catalog.skills))
+    for name in removed: del states[name]
+    write_lock(catalog, lock)
+    print(json.dumps({"removed": removed}, sort_keys=True))
     return 0
 
 
@@ -1630,6 +1836,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     lister = commands.add_parser("list", help="one entry per skill")
     lister.add_argument("--format", choices=["text", "json"], default="text")
 
+    source = commands.add_parser("source", help="deterministic source inventory and cached policy reports")
+    source_commands = source.add_subparsers(dest="source_command", required=True)
+    inventory = source_commands.add_parser("inventory", help="inventory all skill directories at a git ref")
+    inventory.add_argument("source")
+    inventory.add_argument("--ref")
+    inventory.add_argument("--format", choices=["text", "json"], default="text")
+    report = source_commands.add_parser("report", help="report cached agent policy decisions")
+    report.add_argument("source", nargs="?")
+    report.add_argument("--inventory", help="inventory JSON to compare for missing/extra cached decisions")
+    report.add_argument("--format", choices=["text", "json"], default="text")
+
+    commands.add_parser("prune-lock", help="remove lock entries for skills no longer in the catalog")
     return parser.parse_args(argv[1:])
 
 
@@ -1639,13 +1857,17 @@ def main(argv: list[str]) -> int:
     try:
         if args.command == "doctor":
             return cmd_doctor(args.remote)
-        catalog = load_catalog()
+        catalog = load_catalog(validate=args.command != "prune-lock")
         if args.command == "apply":
             return apply_links(catalog)
         if args.command == "update":
             return cmd_update(catalog, args)
         if args.command == "verify":
             return cmd_verify(catalog, args.skill, args.format)
+        if args.command == "source":
+            return cmd_source_inventory(catalog, args.source, args.ref, args.format) if args.source_command == "inventory" else cmd_source_report(catalog, args.source, args.inventory, args.format)
+        if args.command == "prune-lock":
+            return cmd_prune_lock(catalog)
         return cmd_list(catalog, args.format)
     except CliError as error:
         if as_json:
