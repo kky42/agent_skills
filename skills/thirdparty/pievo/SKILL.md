@@ -1,32 +1,27 @@
 ---
 name: pievo
-description: Operate Pievo for recurring or scheduled work that must survive restarts; manage or inspect existing loops; diagnose recovery, blocked runs, or quota gates.
+description: Operate Pievo: set up, inspect, manage, and diagnose recurring or scheduled pi-flow workflows (loops) that survive restarts.
 ---
 
 # Operating pievo
 
-Pievo runs named pi-flow workflows on a cadence. Each **loop** is one named workflow + cadence; every accepted **run** is recorded durably. Reach for pievo when work must repeat or survive restarts; do one-off work directly.
+Pievo runs named pi-flow workflows on a cadence. A **loop** is one named workflow + cadence; every accepted **run** is recorded durably in an append-only ledger. Reach for pievo when work must repeat or survive restarts; do one-off work directly. Speak its language: *loop* (not job/task), *remove* (not delete), a run is *accepted* (not launched).
 
 ## Contract
 
-- Every command prints exactly one JSON envelope. Judge success by `ok` and `diagnostics` only; the payload is `data`. Exit codes: 0 ok, 1 expected failure, 2 usage error, 70 internal.
-- **Acceptance, then observe.** Run-starting commands return at acceptance: `loop run` uses `data.run_id`; `loop start` reports an immediate or durability-uncertain run attempt as `data.accepted_run_id`. Retain that ID. Poll `pievo run show <run-id>` when the user asks for the outcome. An explicit request to prove completion means poll to a terminal state; otherwise poll once after a few seconds and report the current state. There is no `--wait` flag.
-- Mutations need the daemon; reads answer without it (with warning `daemon_unreachable_stale_read`). When a mutation fails, check `pievo daemon status` and `pievo doctor`, then run `pievo daemon start`. If start fails because the port is busy, retry with `pievo daemon start --port 0`. A `daemon_command_timeout` means the bounded request expired; inspect status before retrying a mutation whose acceptance may be uncertain.
-- A successful mutation may carry warning `materialization_failed`: the ledger change committed, but rebuildable copies need repair. Trust the returned action, report the warning, and follow its `repair` metadata; daemon startup rebuilds from the ledger.
-- `PIEVO_HOME` (env) selects the pievo instance; use what the environment gives you. `PIEVO_DASHBOARD_HOST`, `PIEVO_DASHBOARD_PORT`, and env-only `PIEVO_DASHBOARD_TOKEN` set daemon defaults; never invent a token flag.
-- Speak pievo's language: *loop* (not job/task), *remove* (not delete), a run is *accepted* (not launched).
+- Every command prints exactly one JSON envelope. Judge success by `ok` and `diagnostics`; the payload is `data`. Exit codes: 0 ok, 1 expected failure, 2 usage error, 70 internal.
+- **Acceptance, then observe.** Run-starting commands return at acceptance, not completion: `loop run` gives `data.run_id`, `loop start` gives `data.accepted_run_id`. Keep that ID and poll `pievo run show <run-id>` for the outcome — poll to a terminal state only when the user wants completion proven, otherwise once after a few seconds. There is no `--wait` flag.
+- Mutations need the daemon; reads answer without it (warning `daemon_unreachable_stale_read`). If a mutation fails, check `pievo daemon status` and `pievo doctor`, then `pievo daemon start` (retry `--port 0` if the port is busy).
+- A successful mutation may still warn `materialization_failed`: the ledger change committed but a rebuildable copy needs repair. Trust the returned action and report the warning; daemon startup rebuilds from the ledger.
+- `PIEVO_HOME` selects the instance — use what the environment gives you.
 
 ## Commands
 
 ```
 pievo help                               # authoritative command catalog
-pievo --version                          # CLI package version (compare with daemon status)
-pievo daemon status                      # daemon health, version, and dashboard address
-pievo daemon start [--foreground] [--host H] [--port N]
-pievo daemon stop                        # interrupt active runs within the kill grace, then exit; unreachable live ownership is an error
-pievo daemon restart [--foreground] [--host H] [--port N] # preserve prior host/port unless overridden
+pievo daemon status | start | stop | restart   # start: [--foreground] [--host H] [--port N]
 pievo doctor                             # environment and state-root health
-pievo loop register <config.yaml>        # create-or-update by content hash
+pievo loop register <config.yaml>        # create-or-update by content hash; new loops start paused
 pievo loop list                          # triage rows: status, blocked reason, active/latest run, next due
 pievo loop show <name>                   # full view: config, quota usage/limits, consecutive_errors, next_due, recent runs
 pievo loop start <name>                  # activate scheduling; reports data.accepted_run_id for an immediate run
@@ -34,30 +29,45 @@ pievo loop pause <name>                  # stop future scheduling; the active ru
 pievo loop run <name> [--ignore-quota]   # accept one manual run now; returns data.run_id
 pievo loop interrupt <name>              # interrupt the active run; returns once it is terminal
 pievo loop remove <name>                 # remove from current state; history and run records survive
-pievo loop runs <name> [--limit N]       # newest summaries; default 20
+pievo loop runs <name> [--limit N]       # newest run summaries; default 20
 pievo run show <run-id>                  # one run in full: state, result.data, diagnostic, usage
 pievo run logs <run-id> [--limit N]      # newest log tail; default 200, live while executing
 ```
 
+## Set up a loop — trial run before you schedule
+
+`register` starts every loop **paused** on purpose: it schedules nothing until a manual **trial run** proves it and you then start it. Build → register → trial run → validate → start. Never `loop start` a loop whose trial run you have not inspected.
+
+A loop then runs **unattended** — there is no user to consult when it fires at 3 a.m. So its behavior is decided *now*, at authoring time, while the user is here. **Confirm these three with the user before registering; don't decide them alone.** Each has a safe default, so autonomous setup still lands somewhere sane:
+
+1. **Stop or retry.** *Default:* everything retries on the next tick (`error`) or takes a safe checkpoint (`complete`); `blocked` is reserved for a real action only a human can take (grant access, approve, do something physical). **Confirm which conditions — if any — should stop the loop and wait for the user.** Never `blocked` on a transient failure (timeout, rate limit, malformed output, reconcilable uncertainty) — that is the mistake that strands a loop.
+2. **What each run reports.** *Default:* `data` answers what changed and whether attention is needed, as explicit booleans/enums. **Confirm what a finished run must tell the user**, and design `data` around their decisions — not the workflow's internal agents or stages.
+3. **Spend ceiling.** *Default:* any model-backed loop sets a token/cost quota. **Propose quota + cadence and have the user confirm the ceiling** — a recurring loop is a standing spend commitment, and a short cadence with no token/cost quota can run unbounded.
+
+Steps:
+
+1. **Name & check.** Pick the stable `name`; `pievo loop show <name>` and continue only on `loop_not_found`.
+2. **Write the workflow** at `<cwd>/.pi/workflows/<workflow.name>.js`, `meta.name` matching the config. It returns `{ status: "complete" | "blocked", message?, data? }`; **throw** for operational failures (they become `error`). Bake in the stop/retry behavior the user confirmed, and make external effects idempotent — durable records are not exactly-once delivery.
+3. **Write the config** (schema below) with the confirmed limits, and `pievo loop register <file>` — complete only on `data.action: "created"`.
+4. **Trial run.** `pievo loop run <name>` (still paused), poll `run show` to terminal. If it blocks or errors on a healthy input, fix the workflow — don't re-run a broken one.
+5. **Validate & start.** When the trial reached `complete`, `result.data` answers the user's decision, and observed usage fits the quota → `pievo loop start <name>`. Report `next_due`.
+
 ## Loop config
 
 ```yaml
-version: 1                 # schema version, always 1
-name: kb-update            # stable key, ^[a-z0-9][a-z0-9_-]{0,63}$
+version: 1
+name: kb-update            # ^[a-z0-9][a-z0-9_-]{0,63}$
 objective: Keep the knowledge base current.
-cwd: /abs/path/to/project  # absolute, must exist; workflows live under it
+cwd: /abs/path/to/project  # absolute, must exist
 cadence:
   kind: delay              # rerun N after each run finishes…
   after_completion: 6h     # durations: <N>s|m|h|d
-  # …or fixed times:
-  # kind: cron
-  # expr: "0 9 * * *"      # five fields; each is *, a number, or a comma list — no ranges/steps
-  # timezone: Asia/Shanghai  # validated IANA timezone
+  # …or fixed times:  kind: cron / expr: "0 9 * * *" (5 fields, no ranges/steps) / timezone: Asia/Shanghai
 workflow:
-  name: kb-update          # must match a workflow file (below)
+  name: kb-update          # must match the workflow file's meta.name
   args: {}                 # passed to the workflow as `args`
-  timeout: 240m            # optional parent-enforced wall-clock cap; default 240m, maximum 2147483s
-quotas:                    # optional daily gates, local calendar day
+  timeout: 240m            # optional wall-clock cap; default 240m
+quotas:                    # optional daily gates — confirm with the user
   max_runs_per_day: 24
   max_tokens_per_day: 1000000
   max_cost_usd_per_day: 10
@@ -65,114 +75,13 @@ policy:
   max_consecutive_errors: 3  # errors in a row before the loop blocks (default 3)
 ```
 
-Unknown config keys are rejected at every level, and durations must use `<N>s|m|h|d` strings rather than bare numeric seconds. Copy field names exactly—especially quota and timeout fields—rather than assuming an ignored extension is harmless. The workflow must exist at `<cwd>/.pi/workflows/<name>.js` with `meta.name` matching, or registration fails. Minimal shape:
+Unknown keys are rejected at every level; durations are `<N>s|m|h|d` strings, never bare seconds. Copy quota and timeout field names exactly — a misspelled spend control is a rejection, not a silent no-op.
 
-```js
-export const meta = { name: "kb-update", description: "Keep the knowledge base current." };
-const result = await agent("Review recent changes, update the knowledge base, and verify the update.", {
-  label: "update",
-  schema: {
-    type: "object",
-    required: ["changed", "summary", "verified"],
-    properties: {
-      changed: { type: "boolean" },
-      summary: { type: "string" },
-      verified: { type: "boolean" }
-    }
-  }
-});
-if (!result.verified) throw new Error("knowledge-base update could not be verified");
-return {
-  status: "complete",
-  message: result.summary,
-  data: {
-    changes: { made: result.changed },
-    external_effects: { verified: true },
-    attention: { required: false }
-  }
-};
-// Return `blocked` only for a verified, indispensable external action.
-// Throw for operational failures; use `complete` for safe checkpoints/no-ops.
-```
+## Manage & diagnose
 
-Workflow result guidance:
-
-- Put only `status`, `message`, and `data` at the top level. All domain fields belong in `data`.
-- Keep `message` to one short sentence that answers what happened and whether attention is needed.
-- Design `data` around the user's decision dimensions, not the workflow's agents or stages. Give each important question an explicit boolean or small status enum, followed by only the bounded evidence needed to trust it. Keep session IDs, scratch paths, review rounds, and cleanup mechanics out of the result unless they change a user decision or require action.
-- For plain text, use `data.raw_output` only when that text is itself the user-facing deliverable. For schema-constrained output, return a concise user-facing projection rather than exposing the workflow's internal coordination schema. If raw orchestration detail must remain inspectable, emit an explicit bounded `log()` entry; agent output is not logged automatically.
-- For recurring operational workflows, prefer making `data` answer: what changed, whether the intended external effects were verified, and whether indispensable human action is required. An explicit `attention.required` field must agree with top-level status: `true` only for `blocked`; optional warnings or a later automatic reconciliation remain `complete`. Prefer an aggregate field such as `all_targets_verified` plus per-target status over forcing operators to infer success from prose.
-
-### Outcome semantics
-
-`blocked` is a strict, sticky intervention gate: it stops future scheduling until an operator explicitly starts the loop again. It is not a generic unsuccessful result, a retry mechanism, or a synonym for uncertain/failed.
-
-- `complete`: the run met its required objective or reached a safe durable checkpoint. This includes valid no-ops (`already current`, `nothing eligible`), bounded retry-wait checkpoints, and warnings or optional omissions that do not prevent the objective from being met.
-- `error`: the run failed because of a transient or unexpected operational problem such as a timeout, unavailable host/service, malformed agent or tool output, schema failure, workflow bug, or temporary rate limit. Throw an actionable `Error`; do not return `{ status: "error" }`. Errors participate in `max_consecutive_errors`, which is the circuit breaker for repeated operational failures.
-- `blocked`: progress requires a specific external decision, approval, credential, access grant, physical/manual action, or other indispensable intervention that the workflow cannot safely perform under its existing authority. Rerunning unchanged must not reasonably be able to resolve it.
-
-Before returning `blocked`, the workflow must:
-
-1. Verify from authoritative evidence that the condition still exists.
-2. Attempt bounded, safe, idempotent recovery and any available fallback.
-3. Prefer a durable `complete` checkpoint when a later tick can retry or perform read-only reconciliation safely.
-4. Distinguish required acceptance criteria from optional improvements.
-5. Confirm that the necessary action is outside the workflow's authority, not merely something one agent attempt failed to do.
-
-Do not block for an empty work queue, an optional unavailable input, a temporary outage, a malformed model response, a tool timeout, or uncertain external-effect acceptance that the workflow can reconcile safely on a later tick. Do not map words such as “blocked”, “unable”, or “needs help” from raw agent prose directly to loop status; the workflow owns the classification.
-
-Every blocked result should put actionable evidence in `data.blocker`:
-
-```js
-return {
-  status: "blocked",
-  message: "Grant svc-kb read access to repository X, then restart the loop.",
-  data: {
-    blocker: {
-      required_action: "Grant svc-kb read access to repository X.",
-      why_automation_cannot_do_it: "The workflow cannot modify repository permissions.",
-      evidence: "Repository API returned 403 for svc-kb.",
-      resume_when: "svc-kb can read repository X."
-    }
-  }
-};
-```
-
-Author against these runtime boundaries:
-
-- Make every external effect idempotent or implement domain-level dedupe; durable run records do not provide exactly-once effect delivery.
-- Treat token and cost quotas as post-run gates, not hard per-run caps; one run can cross a limit before the next is gated.
-- Treat cron as edge-triggered: missed ticks are not replayed. A due delay loop stays due until a run is accepted.
-
-## Create a loop
-
-1. Choose the stable name and run `pievo loop show <name>`. Continue creation only when it returns `loop_not_found`; an existing name routes to **Update a loop** or requires a different name.
-2. Ensure the workflow file exists in the target `cwd`; write one from the shape above if missing, and satisfy the external-effect boundary above.
-3. Write the config YAML and `pievo loop register <file>`. This step is complete only with `ok:true` and `data.action: "created"`; any other action routes to update or conflict handling before activation.
-4. **New loops register `paused` and accept no scheduled runs until started.** Run `pievo loop start <name>` to activate. Subject to quota and recovery gates, a delay loop with no history accepts a run immediately as `data.accepted_run_id`.
-5. Creation is complete when registration was `created`, `loop show` reports `active`, and any `data.accepted_run_id` has been handled by **Acceptance, then observe**. Report a concrete `next_due` when available; an active run can suppress it until terminal. With no accepted run, the schedule is ready; a manual `pievo loop run` belongs only to an explicit run-now or test request.
-
-## Update a loop
-
-1. `pievo loop show <name>` — `data.loop.config` is the registration schema (JSON is valid YAML).
-2. Write it to a file, edit only what the user asked, and `pievo loop register <file>` under the same `name`.
-3. Accept `data.action: "updated"` with a bumped `config_version`, or `"unchanged"` when the desired config was already accepted. Run `loop show` again; the update is complete when every requested field matches and every untouched field still equals the original config. Updates preserve status and apply to future runs only; an in-flight run keeps the old config.
-
-## Diagnose and report status
-
-Triage with `pievo loop list`, then drill into anything off with `loop show` → `loop runs` → `run show` → `run logs`.
-
-- Status `blocked`, reason `workflow_blocked`: treat the latest result as a request for intervention, not proof that intervention is necessary. Read `message` and `data.blocker`; verify the condition still exists, that the requested action is concrete, and that authorized automation cannot resolve it safely. Surface it as a genuine blocker only when it satisfies the strict outcome semantics above; otherwise report probable workflow misclassification and recommend a correction. Edit workflow source only when the user has authorized that change.
-- Status `blocked`, reason `too_many_errors`: the error breaker tripped — read the failing runs' `diagnostic` before proposing anything.
-- Quota exhausted (`loop show` usage vs limits): scheduled attempts produce no run id until the gate resets at local midnight. A due delay loop remains due; cron waits for a future matching tick and never replays missed ticks. `loop run --ignore-quota` overrides for one run if the user wants it. Missing token/cost contributes zero to gating; partial usage contributes its observed lower bound. Both make the corresponding `*_known` flag false and must not be reported as exact.
-- `run_acceptance_unconfirmed` means no worker was started. Track the returned `run_id` with `run show` and the daemon's recovery diagnostics. Resolution is complete when either the run becomes terminal `error` with diagnostic kind `run_acceptance_unconfirmed`, or that recovery diagnostic clears while `run show` remains `run_not_found`, meaning acceptance never committed. Wait for one outcome before issuing another run-starting mutation.
-- `doctor` returns `ok:false`/exit 1 for error or critical findings. `daemon_lock_live_pid` means the daemon may be starting/unreachable or a stale lock PID was reused. Verify that PID before removing `control/daemon.lock`; malformed lock metadata fails closed. `worker_control_missing` or `worker_control_invalid` means startup cannot safely terminalize that unfinished run—do not invent or delete metadata until the worker/process group has been verified manually.
-- After fixing the cause, `pievo loop start <name>` clears `blocked` and resumes scheduling; the error counter resets only on the next `complete` run.
-
-Report concrete envelope fields — status, reason codes, `run_id`s, `next_due`, messages — not paraphrase.
-
-## Manage loops
-
-- Pause stops future runs only. To stop everything now: `loop pause`, then `loop interrupt`.
-- Remove is rejected with `active_run` while a run executes — interrupt first; removal never kills work implicitly. History stays queryable and same-day quota usage survives; re-registering the name starts fresh (`paused`, `config_version` 1).
-- A manual `loop run` while a run is active fails `already_running`; nothing queues — retry after the active run ends if it still matters.
+- Triage with `loop list`, then drill in: `loop show` → `loop runs` → `run show` → `run logs`. Report concrete fields (status, reason codes, `run_id`s, `next_due`), not paraphrase.
+- **A `blocked` loop is a claim to verify, not proof.** Read `message` + `data.blocker`; confirm the condition still exists and truly needs a human. A block on a transient/retryable condition is a workflow misclassification — fix the classification (only with user authorization to edit workflow source), don't just restart. After the cause is fixed, `loop start` clears `blocked`; the error counter resets only on the next `complete` run.
+- **Quota exhausted:** scheduled attempts are silently skipped (no run id); `loop run --ignore-quota` overrides one run if the user wants it. Resets at local midnight.
+- **Update a loop:** `loop show` → edit the returned config → re-register under the same name. Applies to future runs only; an in-flight run keeps its pinned config.
+- **Stop everything now:** `loop pause`, then `loop interrupt`. **Remove** is rejected while a run is active — interrupt first; history and same-day quota usage survive.
+- **Recovery:** `run_acceptance_unconfirmed`, or `doctor` critical findings (`daemon_lock_live_pid`, `worker_control_*`), mean startup cannot safely finish a run. Verify the process/PID before touching `control/daemon.lock` or worker metadata; wait for the run to terminalize before another run-starting mutation.
