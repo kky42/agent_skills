@@ -75,14 +75,49 @@ return {
   message: output.slice(0, 200),
   data: { raw_output: output },
 };
-// return { status: "blocked", message: "why", data: { raw_output: output } }
-// when a human must step in — this blocks the loop.
+// Return `blocked` only for a verified, indispensable external action.
+// Throw for operational failures; use `complete` for safe checkpoints/no-ops.
 ```
 
 Workflow result rules:
 
 - Put only `status`, `message`, and `data` at the top level. All domain fields and complete agent output belong in `data`.
 - Keep `message` brief and human-readable. For plain text, preserve the full output as `data.raw_output`; for schema-constrained structured output, return that object directly as `data`.
+
+### Outcome semantics
+
+`blocked` is a strict, sticky intervention gate: it stops future scheduling until an operator explicitly starts the loop again. It is not a generic unsuccessful result, a retry mechanism, or a synonym for uncertain/failed.
+
+- `complete`: the run met its required objective or reached a safe durable checkpoint. This includes valid no-ops (`already current`, `nothing eligible`), bounded retry-wait checkpoints, and warnings or optional omissions that do not prevent the objective from being met.
+- `error`: the run failed because of a transient or unexpected operational problem such as a timeout, unavailable host/service, malformed agent or tool output, schema failure, workflow bug, or temporary rate limit. Throw an actionable `Error`; do not return `{ status: "error" }`. Errors participate in `max_consecutive_errors`, which is the circuit breaker for repeated operational failures.
+- `blocked`: progress requires a specific external decision, approval, credential, access grant, physical/manual action, or other indispensable intervention that the workflow cannot safely perform under its existing authority. Rerunning unchanged must not reasonably be able to resolve it.
+
+Before returning `blocked`, the workflow must:
+
+1. Verify from authoritative evidence that the condition still exists.
+2. Attempt bounded, safe, idempotent recovery and any available fallback.
+3. Prefer a durable `complete` checkpoint when a later tick can retry or perform read-only reconciliation safely.
+4. Distinguish required acceptance criteria from optional improvements.
+5. Confirm that the necessary action is outside the workflow's authority, not merely something one agent attempt failed to do.
+
+Do not block for an empty work queue, an optional unavailable input, a temporary outage, a malformed model response, a tool timeout, or uncertain external-effect acceptance that the workflow can reconcile safely on a later tick. Do not map words such as “blocked”, “unable”, or “needs help” from raw agent prose directly to loop status; the workflow owns the classification.
+
+Every blocked result should put actionable evidence in `data.blocker`:
+
+```js
+return {
+  status: "blocked",
+  message: "Grant svc-kb read access to repository X, then restart the loop.",
+  data: {
+    blocker: {
+      required_action: "Grant svc-kb read access to repository X.",
+      why_automation_cannot_do_it: "The workflow cannot modify repository permissions.",
+      evidence: "Repository API returned 403 for svc-kb.",
+      resume_when: "svc-kb can read repository X."
+    }
+  }
+};
+```
 
 Author against these runtime boundaries:
 
@@ -108,7 +143,7 @@ Author against these runtime boundaries:
 
 Triage with `pievo loop list`, then drill into anything off with `loop show` → `loop runs` → `run show` → `run logs`.
 
-- Status `blocked`, reason `workflow_blocked`: the workflow asked for attention — read its latest run's `message` and surface it.
+- Status `blocked`, reason `workflow_blocked`: treat the latest result as a request for intervention, not proof that intervention is necessary. Read `message` and `data.blocker`; verify the condition still exists, that the requested action is concrete, and that authorized automation cannot resolve it safely. Surface it as a genuine blocker only when it satisfies the strict outcome semantics above; otherwise report probable workflow misclassification and recommend a correction. Edit workflow source only when the user has authorized that change.
 - Status `blocked`, reason `too_many_errors`: the error breaker tripped — read the failing runs' `diagnostic` before proposing anything.
 - Quota exhausted (`loop show` usage vs limits): scheduled attempts produce no run id until the gate resets at local midnight. A due delay loop remains due; cron waits for a future matching tick and never replays missed ticks. `loop run --ignore-quota` overrides for one run if the user wants it. Missing token/cost contributes zero to gating; partial usage contributes its observed lower bound. Both make the corresponding `*_known` flag false and must not be reported as exact.
 - `run_acceptance_unconfirmed` means no worker was started. Track the returned `run_id` with `run show` and the daemon's recovery diagnostics. Resolution is complete when either the run becomes terminal `error` with diagnostic kind `run_acceptance_unconfirmed`, or that recovery diagnostic clears while `run show` remains `run_not_found`, meaning acceptance never committed. Wait for one outcome before issuing another run-starting mutation.
