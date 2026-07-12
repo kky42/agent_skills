@@ -679,7 +679,7 @@ const {{readFileSync}}=require('node:fs');
    calls.push({{label:call.label,type:call.subagentType,key:call.sessionKey,prompt:call.prompt}});
    if(call.label==='mirror-worker'||call.label==='mirror-worker-fix'){{worker++; return {{status:'complete',message:'worker',data:data(String.fromCharCode(96+worker).repeat(40))}};}}
    if(call.label==='mirror-review'){{reviews++; const approved=kind!=='reject'; return {{approved,message:approved?'ok':'reject',findings:['bounded finding'],fixRequests:approved?[]:[{{code:'validation',path:'tests/test_skills.py'}}],candidate_worktree:path,base_commit:base,candidate_commit:String.fromCharCode(96+worker).repeat(40)}};}}
-   if(call.label==='mirror-review-finalize'){{const d=data(String.fromCharCode(96+worker).repeat(40)); if(kind==='partial'){{d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'not-run',cleanup:'not-confirmed'}};d.human_actions=['Make the MacBook checkout clean, then resume.'];return {{status:'blocked',message:'MacBook needs attention.',data:d}};}} d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'applied-and-verified',cleanup:'not-confirmed'}}; return {{status:'complete',message:'done',data:d}};}}
+   if(call.label==='mirror-review-finalize'){{const commit=String.fromCharCode(96+worker).repeat(40),d=data(commit); if(kind==='partial'){{d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'not-run',cleanup:'not-confirmed'}};d.human_actions=['Make the MacBook checkout clean, then resume.'];return {{status:'blocked',message:'MacBook needs attention.',data:d}};}} d.primary_head=commit;d.origin_main=commit;d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'applied-and-verified',cleanup:'not-confirmed'}}; return {{status:'complete',message:'done',data:d}};}}
    if(call.label.endsWith('-verify')) return {{registered:true,clean:true,path,message:'verified'}};
    if(call.label.endsWith('-remove')) return {{cleaned:true,path,message:'removed'}};
    throw Error('unexpected '+call.label);
@@ -720,7 +720,8 @@ const {{readFileSync}}=require('node:fs');
         source = (REPO / ".pi/workflows/agent-skills-mirrors.js").read_text(encoding="utf-8")
         self.assertIn('mode === "audit" && current.data.candidate_commit !== current.data.base_commit', source)
         self.assertIn('mode === "live" && reviewValid', source)
-        self.assertIn("sameBaseline(finalizer.data, current.data)", source)
+        self.assertIn("finalizer.data.primary_head === current.data.candidate_commit", source)
+        self.assertIn("finalizer.data.origin_main === current.data.candidate_commit", source)
         self.assertIn("validFixRequests(review.fixRequests)", source)
         self.assertNotIn("findings:review.findings", source)
         self.assertEqual(source.count('session_key:workerSession'), 2)
