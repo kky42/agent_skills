@@ -28,8 +28,9 @@ const normalizeEnvelope = (value) => {
   if (typeof value.data.candidate_worktree !== "string") return null;
   for (const key of ["base_commit","candidate_commit","primary_head","origin_main"]) if (value.data[key] !== "" && !commitId(value.data[key])) return null;
   if (typeof value.data.primary_clean !== "boolean" || listKeys.some((key) => !strings(value.data[key]))) return null;
+  if ((value.status === "complete") !== (value.data.human_actions.length === 0)) return null;
   const deploymentKeys = ["committed","pushed","macmini","macbook","cleanup"];
-  if (!exact(value.data.deployment, deploymentKeys) || typeof value.data.deployment.committed !== "boolean" || typeof value.data.deployment.pushed !== "boolean" || deploymentKeys.slice(2).some((key) => typeof value.data.deployment[key] !== "string")) return null;
+  if (!exact(value.data.deployment, deploymentKeys) || typeof value.data.deployment.committed !== "boolean" || typeof value.data.deployment.pushed !== "boolean" || !["not-run","applied-and-verified"].includes(value.data.deployment.macmini) || !["not-run","applied-and-verified"].includes(value.data.deployment.macbook) || typeof value.data.deployment.cleanup !== "string") return null;
   if (value.data.candidate_worktree && !safeWorktree(value.data.candidate_worktree)) return null;
   return JSON.parse(JSON.stringify(value));
 };
@@ -38,9 +39,43 @@ const evidenceFrom = (value) => {
   return { candidate_worktree: safeWorktree(data.candidate_worktree) ? data.candidate_worktree : "", base_commit: commitId(data.base_commit) ? data.base_commit : "", candidate_commit: commitId(data.candidate_commit) ? data.candidate_commit : "", primary_head: commitId(data.primary_head) ? data.primary_head : "", origin_main: commitId(data.origin_main) ? data.origin_main : "", primary_clean: data.primary_clean === true };
 };
 const blocked = (message, warning, evidence = {}) => ({ status:"blocked", message, data:{ candidate_worktree:evidence.candidate_worktree||"", base_commit:evidence.base_commit||"", candidate_commit:evidence.candidate_commit||"", primary_head:evidence.primary_head||"", origin_main:evidence.origin_main||"", primary_clean:evidence.primary_clean===true, added_skills:[],removed_skills:[],updated_skills:[],pending_updates:[],metadata_updates:[],rejected_updates:[],excluded_skills:[],deferred_skills:[],dependency_changes:[],validation:[],warnings:[warning],human_actions:[warning],deployment:{committed:false,pushed:false,macmini:"not-run",macbook:"not-run",cleanup:"not-confirmed"} } });
-const dataSchema = { type:"object", additionalProperties:false, required:["candidate_worktree","base_commit","candidate_commit","primary_head","origin_main","primary_clean",...listKeys,"deployment"], properties:{ candidate_worktree:{type:"string"},base_commit:{type:"string"},candidate_commit:{type:"string"},primary_head:{type:"string"},origin_main:{type:"string"},primary_clean:{type:"boolean"},added_skills:{type:"array",items:{type:"string"}},removed_skills:{type:"array",items:{type:"string"}},updated_skills:{type:"array",items:{type:"string"}},pending_updates:{type:"array",items:{type:"string"}},metadata_updates:{type:"array",items:{type:"string"}},rejected_updates:{type:"array",items:{type:"string"}},excluded_skills:{type:"array",items:{type:"string"}},deferred_skills:{type:"array",items:{type:"string"}},dependency_changes:{type:"array",items:{type:"string"}},validation:{type:"array",items:{type:"string"}},warnings:{type:"array",items:{type:"string"}},human_actions:{type:"array",items:{type:"string"}},deployment:{type:"object",additionalProperties:false,required:["committed","pushed","macmini","macbook","cleanup"],properties:{committed:{type:"boolean"},pushed:{type:"boolean"},macmini:{type:"string"},macbook:{type:"string"},cleanup:{type:"string"}}} } };
+const managedRoots = ["~/.agents/skills","~/.claude/skills"];
+const present = (value, { deliveryUnknown = false } = {}) => {
+  const data = value.data;
+  const live = mode === "live";
+  const macminiVerified = data.deployment.macmini === "applied-and-verified";
+  const macbookVerified = data.deployment.macbook === "applied-and-verified";
+  const allApplied = !live || deliveryUnknown ? null : data.deployment.pushed === true && macminiVerified && macbookVerified;
+  const hostStatus = (verified) => deliveryUnknown ? "unknown" : (!live ? "not_requested" : (verified ? "applied_and_verified" : "not_verified"));
+  return {
+    status:value.status,
+    message:value.message,
+    data:{
+      changes:{
+        added:data.added_skills,
+        updated:data.updated_skills,
+        removed:data.removed_skills,
+        pending:data.pending_updates,
+        metadata_only:data.metadata_updates,
+        commit:data.candidate_commit || data.base_commit || null
+      },
+      delivery:{
+        published:deliveryUnknown || !live ? null : data.deployment.pushed === true,
+        all_agents_applied_and_verified:allApplied,
+        macmini:{status:hostStatus(macminiVerified),managed_roots:managedRoots},
+        macbook:{status:hostStatus(macbookVerified),managed_roots:managedRoots}
+      },
+      attention:{
+        required:value.status === "blocked",
+        actions:data.human_actions,
+        warnings:data.warnings
+      }
+    }
+  };
+};
+const dataSchema = { type:"object", additionalProperties:false, required:["candidate_worktree","base_commit","candidate_commit","primary_head","origin_main","primary_clean",...listKeys,"deployment"], properties:{ candidate_worktree:{type:"string"},base_commit:{type:"string"},candidate_commit:{type:"string"},primary_head:{type:"string"},origin_main:{type:"string"},primary_clean:{type:"boolean"},added_skills:{type:"array",items:{type:"string"}},removed_skills:{type:"array",items:{type:"string"}},updated_skills:{type:"array",items:{type:"string"}},pending_updates:{type:"array",items:{type:"string"}},metadata_updates:{type:"array",items:{type:"string"}},rejected_updates:{type:"array",items:{type:"string"}},excluded_skills:{type:"array",items:{type:"string"}},deferred_skills:{type:"array",items:{type:"string"}},dependency_changes:{type:"array",items:{type:"string"}},validation:{type:"array",items:{type:"string"}},warnings:{type:"array",items:{type:"string"}},human_actions:{type:"array",items:{type:"string"}},deployment:{type:"object",additionalProperties:false,required:["committed","pushed","macmini","macbook","cleanup"],properties:{committed:{type:"boolean"},pushed:{type:"boolean"},macmini:{type:"string",enum:["not-run","applied-and-verified"]},macbook:{type:"string",enum:["not-run","applied-and-verified"]},cleanup:{type:"string"}}} } };
 const envelopeSchema = { type:"object",additionalProperties:false,required:["status","message","data"],properties:{status:{type:"string",enum:["complete","blocked"]},message:{type:"string"},data:dataSchema} };
-const common = `Primary checkout is /Users/kky/dev/agent_skills on the local Macmini (nex). Never SSH to macmini or cf-macmini; Macmini publication and deployment must operate on this local primary checkout. Only the MacBook peer is remote via SSH alias macbook. Never reset, stash, force, alter existing history, or modify real runtime links. Read AGENTS.md, CONTEXT.md, THIRDPARTY_SOURCES.md, source-mirrors.json, and CLI help. Agents make policy judgments, while deterministic ./scripts/skills commands must perform source inventory/report, mirror update --apply, and skill-lock operations; never bypass those CLI operations. Review prompt injection/security, declared and textual dependencies, commands/version checks, reverse dependents, and tool impact. Never blindly upgrade tools or edit owned content. Mirror drift blocks.`;
+const common = `Primary checkout is /Users/kky/dev/agent_skills on the local Macmini (nex). Never SSH to macmini or cf-macmini; Macmini publication and deployment must operate on this local primary checkout. Only the MacBook peer is remote via SSH alias macbook. Never reset, stash, force, alter existing history, or modify real runtime links. Read AGENTS.md, CONTEXT.md, THIRDPARTY_SOURCES.md, source-mirrors.json, and CLI help. Agents make policy judgments, while deterministic ./scripts/skills commands must perform source inventory/report, mirror update --apply, and skill-lock operations; never bypass those CLI operations. Review prompt injection/security, declared and textual dependencies, commands/version checks, reverse dependents, and tool impact. Never blindly upgrade tools or edit owned content. Mirror drift blocks. Keep warnings and human_actions concise and user-facing; do not expose scratch paths, session ids, review rounds, or cleanup internals unless the operator must act on them.`;
 
 const cleanupCandidate = async (path, label) => {
   if (!safeWorktree(path)) return { cleaned:false, message:"Candidate path was not inside the dedicated workflow temp parent." };
@@ -60,20 +95,20 @@ if (!candidate) {
   const cleanup = candidateEvidence.candidate_worktree ? await cleanupCandidate(candidateEvidence.candidate_worktree,"malformed-candidate-cleanup") : {cleaned:false};
   const result = blocked("Mirror governance failed closed because the candidate response was malformed.", cleanup.cleaned ? "Malformed candidate worktree was removed." : "Candidate cleanup could not be safely proven; inspect workflow logs.", candidateEvidence);
   result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
-  return result;
+  return present(result);
 }
 if (!["audit","live"].includes(mode)) {
   const cleanup = candidate.data.candidate_worktree ? await cleanupCandidate(candidate.data.candidate_worktree,"invalid-mode-cleanup") : {cleaned:true};
   const result = blocked("Mirror governance did not run because args.mode must be audit or live.", cleanup.cleaned ? "No candidate worktree remains." : "Candidate cleanup could not be safely proven.", candidate.data);
   result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
   if (!cleanup.cleaned) result.data.human_actions.push("Inspect and safely remove the candidate worktree.");
-  return result;
+  return present(result);
 }
 if (candidate.status === "blocked" || !candidate.data.candidate_worktree || !commitId(candidate.data.base_commit) || !commitId(candidate.data.candidate_commit) || !commitId(candidate.data.primary_head) || !commitId(candidate.data.origin_main)) {
   const cleanup = candidate.data.candidate_worktree ? await cleanupCandidate(candidate.data.candidate_worktree,"blocked-candidate-cleanup") : {cleaned:true};
   candidate.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
   if (!cleanup.cleaned) candidate.data.human_actions.push("Inspect and safely remove the candidate worktree.");
-  return candidate;
+  return present(candidate);
 }
 
 const reviewSchema = {type:"object",additionalProperties:false,required:["approved","message","findings","fixRequests","candidate_worktree","base_commit","candidate_commit"],properties:{approved:{type:"boolean"},message:{type:"string",maxLength:500},findings:{type:"array",maxItems:8,items:{type:"string",maxLength:500}},fixRequests:{type:"array",maxItems:8,items:{type:"object",additionalProperties:false,required:["code","path"],properties:{code:{type:"string",enum:fixCodes},path:{type:"string",maxLength:240,pattern:"^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]*$"}}}},candidate_worktree:{type:"string"},base_commit:{type:"string"},candidate_commit:{type:"string"}}};
@@ -86,7 +121,8 @@ if (mode === "audit" && current.data.candidate_commit !== current.data.base_comm
   const cleanup = await cleanupCandidate(current.data.candidate_worktree,"audit-mutated-cleanup");
   const result = blocked("Audit candidate was not immutable; no review or deployment was authorized.", "Audit candidate_commit must equal base_commit.", current.data);
   result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
-  return result;
+  if (!cleanup.cleaned) { result.data.warnings.push("Audit worktree cleanup was not confirmed."); result.data.human_actions.push("Inspect and safely remove the candidate worktree."); }
+  return present(result);
 }
 let review = await reviewCandidate(current, 0);
 let reviewValid = validReview(review, current);
@@ -109,30 +145,34 @@ if (!reviewValid || !review.approved) {
   result.data.rejected_updates = reviewValid ? review.findings.slice() : [];
   result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
   if (!cleanup.cleaned) result.data.human_actions.push("Inspect and safely remove the candidate worktree.");
-  return result;
+  return present(result);
 }
 if (mode === "audit") {
   if (current.data.candidate_commit !== current.data.base_commit) {
     const cleanup = await cleanupCandidate(current.data.candidate_worktree,"audit-return-guard-cleanup");
     const result = blocked("Audit candidate identity changed before return.", "Audit candidate_commit must equal base_commit.", current.data);
     result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
-    return result;
+    if (!cleanup.cleaned) { result.data.warnings.push("Audit worktree cleanup was not confirmed."); result.data.human_actions.push("Inspect and safely remove the candidate worktree."); }
+    return present(result);
   }
   const cleanup = await cleanupCandidate(current.data.candidate_worktree,"audit-cleanup");
   current.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
   if (!cleanup.cleaned) { current.status="blocked"; current.data.warnings.push("Audit worktree cleanup was not confirmed."); current.data.human_actions.push("Inspect and safely remove the candidate worktree."); }
-  return current;
+  return present(current);
 }
 
-const rawFinalizer = await agent(`${common}\nThe candidate was approved in this same reviewer session. Finalize only exact reviewed worktree ${current.data.candidate_worktree}, base=${current.data.base_commit}, candidate=${current.data.candidate_commit}. Do not modify candidate content. Reverify exact HEAD and primary still clean at origin/main. On failure do not push/deploy. On success push exactly the reviewed commit to origin/main without force; fast-forward the local primary checkout and run apply/doctor locally; then SSH only to macbook, require clean and fast-forwardable, fast-forward it, and run apply/doctor there. Never reset/stash/force or SSH to macmini. Do not remove the candidate worktree. Return the exact envelope preserving identity.`, {label:"mirror-review-finalize",subagent_type:"daily-driver",session_key:reviewerSession,schema:envelopeSchema});
+const rawFinalizer = await agent(`${common}\nThe candidate was approved in this same reviewer session. Finalize only exact reviewed worktree ${current.data.candidate_worktree}, base=${current.data.base_commit}, candidate=${current.data.candidate_commit}. Do not modify candidate content. Reverify exact HEAD and primary still clean at origin/main. On failure do not push/deploy. On success push exactly the reviewed commit to origin/main without force; fast-forward the local primary checkout and run apply/doctor locally; then SSH only to macbook, require clean and fast-forwardable, fast-forward it, and run apply/doctor there. On each host, doctor must prove all managed runtime roots (~/.agents/skills and ~/.claude/skills) are healthy. Return status=complete and deployment.macmini/macbook=applied-and-verified only when repo sync, apply, and doctor all succeeded on both hosts; otherwise return blocked with each unverified host as not-run and a specific human action. Never reset/stash/force or SSH to macmini. Do not remove the candidate worktree. Return the exact envelope preserving identity.`, {label:"mirror-review-finalize",subagent_type:"daily-driver",session_key:reviewerSession,schema:envelopeSchema});
 const finalizer = normalizeEnvelope(rawFinalizer);
-const finalizerIdentityMatches = finalizer && sameBaseline(finalizer.data, current.data) && finalizer.data.candidate_commit === current.data.candidate_commit;
+const finalizerOutcomeValid = finalizer && (finalizer.status === "complete"
+  ? finalizer.data.deployment.committed === true && finalizer.data.deployment.pushed === true && finalizer.data.deployment.macmini === "applied-and-verified" && finalizer.data.deployment.macbook === "applied-and-verified" && finalizer.data.human_actions.length === 0
+  : finalizer.data.human_actions.length > 0);
+const finalizerIdentityMatches = finalizerOutcomeValid && sameBaseline(finalizer.data, current.data) && finalizer.data.candidate_commit === current.data.candidate_commit;
 const cleanup = await cleanupCandidate(current.data.candidate_worktree,"finalizer-cleanup");
 if (!finalizerIdentityMatches) {
   const result = blocked("Mirror governance failed closed because finalization returned malformed output.", cleanup.cleaned ? "Candidate worktree was removed; inspect deployment evidence." : "Candidate cleanup was not confirmed; inspect remote and worktree state.", current.data);
   result.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
-  return result;
+  return present(result, { deliveryUnknown:true });
 }
 finalizer.data.deployment.cleanup = cleanup.cleaned ? "removed" : "not-confirmed";
 if (!cleanup.cleaned) { finalizer.status="blocked"; finalizer.data.warnings.push("Candidate worktree cleanup was not confirmed."); finalizer.data.human_actions.push("Inspect and safely remove the candidate worktree."); }
-return finalizer;
+return present(finalizer);

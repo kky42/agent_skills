@@ -678,34 +678,43 @@ const {{readFileSync}}=require('node:fs');
   const out=await runWorkflow(source,{{cwd:{json.dumps(str(REPO))},limiter:new ConcurrencyLimiter(2),replayEnabled:false,args:{{mode:'live'}},runAgent:async call=>{{
    calls.push({{label:call.label,type:call.subagentType,key:call.sessionKey,prompt:call.prompt}});
    if(call.label==='mirror-worker'||call.label==='mirror-worker-fix'){{worker++; return {{status:'complete',message:'worker',data:data(String.fromCharCode(96+worker).repeat(40))}};}}
-   if(call.label==='mirror-review'){{reviews++; const approved=kind==='approve' || false; return {{approved,message:approved?'ok':'reject',findings:['bounded finding'],fixRequests:approved?[]:[{{code:'validation',path:'tests/test_skills.py'}}],candidate_worktree:path,base_commit:base,candidate_commit:String.fromCharCode(96+worker).repeat(40)}};}}
-   if(call.label==='mirror-review-finalize'){{const d=data(String.fromCharCode(96+worker).repeat(40)); d.deployment={{committed:true,pushed:true,macmini:'ok',macbook:'ok',cleanup:'not-confirmed'}}; return {{status:'complete',message:'done',data:d}};}}
+   if(call.label==='mirror-review'){{reviews++; const approved=kind!=='reject'; return {{approved,message:approved?'ok':'reject',findings:['bounded finding'],fixRequests:approved?[]:[{{code:'validation',path:'tests/test_skills.py'}}],candidate_worktree:path,base_commit:base,candidate_commit:String.fromCharCode(96+worker).repeat(40)}};}}
+   if(call.label==='mirror-review-finalize'){{const d=data(String.fromCharCode(96+worker).repeat(40)); if(kind==='partial'){{d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'not-run',cleanup:'not-confirmed'}};d.human_actions=['Make the MacBook checkout clean, then resume.'];return {{status:'blocked',message:'MacBook needs attention.',data:d}};}} d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'applied-and-verified',cleanup:'not-confirmed'}}; return {{status:'complete',message:'done',data:d}};}}
    if(call.label.endsWith('-verify')) return {{registered:true,clean:true,path,message:'verified'}};
    if(call.label.endsWith('-remove')) return {{cleaned:true,path,message:'removed'}};
    throw Error('unexpected '+call.label);
   }}}}); return {{result:out.result,calls,worker,reviews}};
  }}
- console.log(JSON.stringify({{approve:await execute('approve'),reject:await execute('reject')}}));
+ console.log(JSON.stringify({{approve:await execute('approve'),partial:await execute('partial'),reject:await execute('reject')}}));
 }})().catch(e=>{{console.error(e);process.exit(1)}});
 """
         process = subprocess.run(["node", "-e", script], text=True, capture_output=True)
         self.assertEqual(process.returncode, 0, process.stderr)
         output = json.loads(process.stdout)
-        approved, rejected = output["approve"], output["reject"]
+        approved, partial, rejected = output["approve"], output["partial"], output["reject"]
         self.assertEqual(approved["result"]["status"], "complete")
-        self.assertTrue(approved["result"]["data"]["deployment"]["pushed"])
-        self.assertEqual(approved["result"]["data"]["deployment"]["cleanup"], "removed")
+        self.assertTrue(approved["result"]["data"]["delivery"]["published"])
+        self.assertTrue(approved["result"]["data"]["delivery"]["all_agents_applied_and_verified"])
+        self.assertEqual(approved["result"]["data"]["delivery"]["macmini"]["managed_roots"], ["~/.agents/skills", "~/.claude/skills"])
+        self.assertEqual(partial["result"]["status"], "blocked")
+        self.assertTrue(partial["result"]["data"]["delivery"]["published"])
+        self.assertFalse(partial["result"]["data"]["delivery"]["all_agents_applied_and_verified"])
+        self.assertEqual(partial["result"]["data"]["delivery"]["macmini"]["status"], "applied_and_verified")
+        self.assertEqual(partial["result"]["data"]["delivery"]["macbook"]["status"], "not_verified")
         self.assertEqual(rejected["worker"], 3)  # initial plus at most two fixes
         self.assertEqual(rejected["reviews"], 3)
         self.assertEqual(rejected["result"]["status"], "blocked")
-        self.assertFalse(rejected["result"]["data"]["deployment"]["pushed"])
-        for case in (approved, rejected):
+        self.assertFalse(rejected["result"]["data"]["delivery"]["published"])
+        self.assertFalse(rejected["result"]["data"]["delivery"]["all_agents_applied_and_verified"])
+        self.assertTrue(rejected["result"]["data"]["attention"]["required"])
+        for case in (approved, partial, rejected):
             self.assertEqual({call["key"] for call in case["calls"]}, {"mirror-worker", "mirror-reviewer"})
             self.assertTrue(all(call["type"] == "daily-driver" for call in case["calls"]))
             self.assertTrue(all(call["key"] == "mirror-reviewer" for call in case["calls"] if "finalize" in call["label"] or "cleanup" in call["label"]))
             self.assertFalse(any("finalize" in call["label"] for call in case["calls"] if call["key"] == "mirror-worker"))
             self.assertEqual(set(case["result"]), {"status", "message", "data"})
-            self.assertEqual(set(case["result"]["data"]["deployment"]), {"committed", "pushed", "macmini", "macbook", "cleanup"})
+            self.assertEqual(set(case["result"]["data"]), {"changes", "delivery", "attention"})
+            self.assertEqual(set(case["result"]["data"]["delivery"]), {"published", "all_agents_applied_and_verified", "macmini", "macbook"})
 
     def test_workflow_static_fail_closed_invariants(self) -> None:
         source = (REPO / ".pi/workflows/agent-skills-mirrors.js").read_text(encoding="utf-8")
@@ -729,15 +738,16 @@ const d=(p=path)=>({{candidate_worktree:p,base_commit:id,candidate_commit:id,pri
 async function run(kind){{const calls=[];const out=await runWorkflow(source,{{cwd:{json.dumps(str(REPO))},limiter:new ConcurrencyLimiter(2),replayEnabled:false,args:{{mode:kind==='audit'?'audit':'live'}},runAgent:async c=>{{calls.push(c.label);
 if(c.label==='mirror-worker'){{if(kind==='malformed')return {{bad:true}};if(kind==='unsafe')return {{status:'complete',message:'x',data:d('/tmp/agent-skills-mirrors-worktrees/bad path')}};return {{status:'complete',message:'x',data:d()}};}}
 if(c.label==='mirror-review')return {{approved:kind!=='audit',message:kind==='audit'?'reject':'ok',findings:kind==='audit'?['audit issue']:[],fixRequests:kind==='audit'?[{{code:'validation',path:'tests/test_skills.py'}}]:[],candidate_worktree:path,base_commit:id,candidate_commit:id}};
-if(c.label==='mirror-review-finalize'){{const x=d();x.primary_head='b'.repeat(40);return {{status:'complete',message:'wrong baseline',data:x}};}}
+if(c.label==='mirror-review-finalize'){{const x=d();if(kind==='inconsistent')return {{status:'complete',message:'false success',data:x}};x.primary_head='b'.repeat(40);return {{status:'complete',message:'wrong baseline',data:x}};}}
 if(c.label.endsWith('-verify'))return {{registered:true,clean:true,path,message:'ok'}};if(c.label.endsWith('-remove'))return {{cleaned:true,path,message:'ok'}};throw Error(c.label)}}}});return {{result:out.result,calls}}}}
-console.log(JSON.stringify({{malformed:await run('malformed'),unsafe:await run('unsafe'),identity:await run('identity'),audit:await run('audit')}}))}})().catch(e=>{{console.error(e);process.exit(1)}});
+console.log(JSON.stringify({{malformed:await run('malformed'),unsafe:await run('unsafe'),identity:await run('identity'),inconsistent:await run('inconsistent'),audit:await run('audit')}}))}})().catch(e=>{{console.error(e);process.exit(1)}});
 """
         process = subprocess.run(["node", "-e", script], text=True, capture_output=True)
         self.assertEqual(process.returncode, 0, process.stderr)
         output = json.loads(process.stdout)
         self.assertEqual(output["malformed"]["result"]["status"], "blocked")
-        self.assertEqual(output["unsafe"]["result"]["data"]["candidate_worktree"], "")
+        self.assertNotIn("candidate_worktree", output["unsafe"]["result"]["data"])
+        self.assertTrue(output["unsafe"]["result"]["data"]["attention"]["required"])
         self.assertNotIn("malformed-candidate-cleanup-verify", output["malformed"]["calls"])
         self.assertNotIn("unsafe", " ".join(output["unsafe"]["calls"]))
         audit = output["audit"]
@@ -745,7 +755,13 @@ console.log(JSON.stringify({{malformed:await run('malformed'),unsafe:await run('
         self.assertNotIn("mirror-worker-fix", audit["calls"])
         identity = output["identity"]
         self.assertEqual(identity["result"]["status"], "blocked")
-        self.assertEqual(identity["result"]["data"]["deployment"]["cleanup"], "removed")
+        self.assertIsNone(identity["result"]["data"]["delivery"]["published"])
+        self.assertIsNone(identity["result"]["data"]["delivery"]["all_agents_applied_and_verified"])
+        self.assertTrue(identity["result"]["data"]["attention"]["required"])
+        inconsistent = output["inconsistent"]
+        self.assertEqual(inconsistent["result"]["status"], "blocked")
+        self.assertIsNone(inconsistent["result"]["data"]["delivery"]["published"])
+        self.assertTrue(inconsistent["result"]["data"]["attention"]["required"])
         self.assertIn("finalizer-cleanup-verify", identity["calls"])
         self.assertIn("finalizer-cleanup-remove", identity["calls"])
 
