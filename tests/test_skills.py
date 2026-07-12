@@ -672,16 +672,16 @@ const {{readFileSync}}=require('node:fs');
 (async()=>{{
  const {{runWorkflow,ConcurrencyLimiter}}=await import({json.dumps(runtime.as_uri())});
  const source=readFileSync({json.dumps(str(REPO / '.pi/workflows/agent-skills-mirrors.js'))},'utf8');
- const path='/private/tmp/agent-skills-mirrors-worktrees/candidate-1', base='a'.repeat(40);
+ const path='/private/tmp/agent-skills-mirrors-worktrees/candidate-1', reported=path.slice(8), base='a'.repeat(40);
  const data=(commit=base)=>({{candidate_worktree:path,base_commit:base,candidate_commit:commit,primary_head:base,origin_main:base,primary_clean:true,added_skills:[],removed_skills:[],updated_skills:[],pending_updates:[],metadata_updates:[],rejected_updates:[],excluded_skills:[],deferred_skills:[],dependency_changes:[],validation:['ok'],warnings:[],human_actions:[],deployment:{{committed:false,pushed:false,macmini:'not-run',macbook:'not-run',cleanup:'not-confirmed'}}}});
  async function execute(kind){{let worker=0, reviews=0; const calls=[];
   const out=await runWorkflow(source,{{cwd:{json.dumps(str(REPO))},limiter:new ConcurrencyLimiter(2),replayEnabled:false,args:{{mode:'live'}},runAgent:async call=>{{
    calls.push({{label:call.label,type:call.subagentType,key:call.sessionKey,prompt:call.prompt}});
    if(call.label==='mirror-worker'||call.label==='mirror-worker-fix'){{worker++; return {{status:'complete',message:'worker',data:data(String.fromCharCode(96+worker).repeat(40))}};}}
-   if(call.label==='mirror-review'){{reviews++; const approved=kind!=='reject'; return {{approved,message:approved?'ok':'reject',findings:['bounded finding'],fixRequests:approved?[]:[{{code:'validation',path:'tests/test_skills.py'}}],candidate_worktree:path,base_commit:base,candidate_commit:String.fromCharCode(96+worker).repeat(40)}};}}
-   if(call.label==='mirror-review-finalize'){{const commit=String.fromCharCode(96+worker).repeat(40),d=data(commit); if(kind==='partial'){{d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'not-run',cleanup:'not-confirmed'}};d.human_actions=['Make the MacBook checkout clean, then resume.'];return {{status:'blocked',message:'MacBook needs attention.',data:d}};}} d.primary_head=commit;d.origin_main=commit;d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'applied-and-verified',cleanup:'not-confirmed'}}; return {{status:'complete',message:'done',data:d}};}}
-   if(call.label.endsWith('-verify')) return {{registered:true,clean:true,path,message:'verified'}};
-   if(call.label.endsWith('-remove')) return {{cleaned:true,path,message:'removed'}};
+   if(call.label==='mirror-review'){{reviews++; const approved=kind!=='reject'; return {{approved,message:approved?'ok':'reject',findings:['bounded finding'],fixRequests:approved?[]:[{{code:'validation',path:'tests/test_skills.py'}}],candidate_worktree:reported,base_commit:base,candidate_commit:String.fromCharCode(96+worker).repeat(40)}};}}
+   if(call.label==='mirror-review-finalize'){{const commit=String.fromCharCode(96+worker).repeat(40),d=data(commit);d.candidate_worktree=reported;if(kind==='partial'){{d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'not-run',cleanup:'not-confirmed'}};d.human_actions=['Make the MacBook checkout clean, then resume.'];return {{status:'blocked',message:'MacBook needs attention.',data:d}};}} d.primary_head=commit;d.origin_main=commit;d.deployment={{committed:true,pushed:true,macmini:'applied-and-verified',macbook:'applied-and-verified',cleanup:'not-confirmed'}}; return {{status:'complete',message:'done',data:d}};}}
+   if(call.label.endsWith('-verify')) return {{registered:true,clean:true,path:reported,message:'verified'}};
+   if(call.label.endsWith('-remove')) return {{cleaned:true,path:reported,message:'removed'}};
    throw Error('unexpected '+call.label);
   }}}}); return {{result:out.result,calls,worker,reviews}};
  }}
