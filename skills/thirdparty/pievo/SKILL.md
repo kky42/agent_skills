@@ -1,6 +1,6 @@
 ---
 name: pievo
-description: Operate Pievo: set up, inspect, manage, and diagnose recurring or scheduled pi-flow workflows (loops) that survive restarts.
+description: Operate Pievo for recurring or scheduled pi-flow workflows (loops) that survive restarts. Set up, inspect, manage, or diagnose them.
 ---
 
 # Operating pievo
