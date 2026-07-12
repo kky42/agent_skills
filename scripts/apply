@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Apply this repository's skill selection with npx skills."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+OWNED_ROOT = ROOT / "skills"
+NPX_PACKAGE = os.environ.get("AGENT_SKILLS_NPX_PACKAGE", "skills@1.5.16")
+AGENTS = ["codex", "claude-code", "pi"]
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"error: {message}")
+
+
+def load_desired() -> tuple[dict[str, list[str]], list[str]]:
+    try:
+        sources = json.loads((ROOT / "thirdparty.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"cannot read thirdparty.json: {error}")
+    if not isinstance(sources, dict) or not sources:
+        fail("thirdparty.json must map sources to non-empty skill lists")
+
+    thirdparty: set[str] = set()
+    for source, names in sources.items():
+        if not isinstance(source, str) or not source or source != source.strip() or source.startswith("-"):
+            fail("third-party sources must be non-empty CLI-safe strings")
+        if not isinstance(names, list) or not names or len(names) != len(set(names)):
+            fail(f"{source}: skill list must be non-empty and unique")
+        if any(not isinstance(name, str) or not NAME_RE.fullmatch(name) for name in names):
+            fail(f"{source}: invalid skill name")
+        overlap = thirdparty.intersection(names)
+        if overlap:
+            fail(f"third-party skill appears more than once: {sorted(overlap)[0]}")
+        thirdparty.update(names)
+        sources[source] = sorted(names)
+
+    owned: list[str] = []
+    for path in sorted(OWNED_ROOT.iterdir()):
+        if path.name.startswith("."):
+            continue
+        skill_file = path / "SKILL.md"
+        if not path.is_dir() or not skill_file.is_file() or not NAME_RE.fullmatch(path.name):
+            fail(f"{path}: expected a flat, CLI-safe owned skill directory with SKILL.md")
+        text = skill_file.read_text(encoding="utf-8")
+        match = re.search(r"(?m)^name:\s*([^\s#]+)\s*$", text.split("---", 2)[1] if text.startswith("---") else "")
+        if not match or match.group(1) != path.name:
+            fail(f"{skill_file}: frontmatter name must equal {path.name!r}")
+        if len(list(path.glob("**/SKILL.md"))) != 1:
+            fail(f"{path}: nested skills are not allowed")
+        owned.append(path.name)
+    if thirdparty.intersection(owned):
+        fail(f"owned and third-party names overlap: {sorted(thirdparty.intersection(owned))[0]}")
+    return dict(sorted(sources.items())), owned
+
+
+def command(*arguments: str, capture: bool = False) -> str:
+    argv = ["npx", "--yes", NPX_PACKAGE, *arguments]
+    print("+ " + shlex.join(argv), file=sys.stderr, flush=True)
+    process = subprocess.run(argv, cwd=ROOT, text=True, capture_output=True)
+    if process.stdout and not capture:
+        print(process.stdout, file=sys.stderr, end="")
+    if process.stderr:
+        print(process.stderr, file=sys.stderr, end="")
+    output = ANSI_RE.sub("", (process.stdout or "") + "\n" + (process.stderr or ""))
+    silent_failure = re.search(
+        r"(?i)\bfailed to (?:fetch|check|update|install)|\berror (?:fetching|checking|updating|installing)",
+        output,
+    )
+    if process.returncode or silent_failure:
+        detail = silent_failure.group(0) if silent_failure else f"exit {process.returncode}"
+        fail(f"command failed: {detail}")
+    return process.stdout
+
+
+def installed_names() -> set[str]:
+    try:
+        return {row["name"] for row in json.loads(command("list", "--global", "--json", capture=True))}
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        fail(f"cannot parse installed skills: {error}")
+
+
+def main() -> None:
+    sources, owned = load_desired()
+    thirdparty = {name for names in sources.values() for name in names}
+    desired = thirdparty | set(owned)
+    arguments = sys.argv[1:]
+
+    if arguments == ["--check"]:
+        print(json.dumps({"agents": AGENTS, "owned": owned, "thirdparty": sources}, sort_keys=True))
+        return
+    if arguments[:1] == ["--remove"]:
+        names = arguments[1:]
+        if not names or any(not NAME_RE.fullmatch(name) for name in names):
+            fail("usage: scripts/apply --remove <safe-name>...")
+        still_desired = sorted(set(names).intersection(desired))
+        if still_desired:
+            fail(f"remove these names from skills/ or thirdparty.json first: {still_desired}")
+        command("remove", *names, "--global", "--yes")
+    elif arguments == ["--update"]:
+        command("update", *sorted(thirdparty), "--global", "--yes")
+    elif arguments:
+        fail("usage: scripts/apply [--check|--update|--remove <name>...]")
+
+    installed = installed_names()
+    for source, names in sources.items():
+        missing = sorted(set(names) - installed)
+        if missing:
+            command("add", source, "--global", "--skill", *missing, "--agent", *AGENTS, "--yes")
+    if owned:
+        command("add", str(ROOT), "--global", "--skill", *owned, "--agent", *AGENTS, "--yes")
+
+    installed = installed_names()
+    missing = sorted(desired - installed)
+    if missing:
+        fail(f"desired skills are still missing: {missing}")
+
+    state_root = Path(os.environ["XDG_STATE_HOME"]) / "skills" if os.environ.get("XDG_STATE_HOME") else Path.home() / ".agents"
+    npx_ledger_path = state_root / ".skill-lock.json"
+    try:
+        npx_ledger = json.loads(npx_ledger_path.read_text(encoding="utf-8"))["skills"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+        fail(f"cannot read npx ledger {npx_ledger_path}: {error}")
+    wrong_sources = {
+        name: {"actual": npx_ledger.get(name, {}).get("source"), "expected": source}
+        for source, names in sources.items()
+        for name in names
+        if npx_ledger.get(name, {}).get("source") != source
+    }
+    if wrong_sources:
+        fail(f"third-party source mismatch: {json.dumps(wrong_sources, sort_keys=True)}")
+    print(json.dumps({
+        "ok": True,
+        "agents": AGENTS,
+        "installed": sorted(desired),
+        "extra": sorted(installed - desired),
+    }, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

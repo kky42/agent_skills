@@ -1,67 +1,38 @@
 # agent_skills
 
-One place to manage global agent skills across Codex, Pi, and Claude Code. Every skill is either a **mirror** (exact upstream directory) or **owned** (this repo is authoritative). Orthogonally, mirror governance is **source** mode (an agent inventories the whole source and applies policy) or **skill** mode (one explicitly selected skill). See [`THIRDPARTY_SOURCES.md`](THIRDPARTY_SOURCES.md) and the validated cache [`source-mirrors.json`](source-mirrors.json). Runtime dirs (`~/.agents/skills`, `~/.claude/skills`) are flat symlinks into `skills/`.
+A small source-of-truth repository for global agent skills on the MacBook and Macmini.
+
+- [`skills/`](skills/) contains only locally owned skills.
+- [`thirdparty.json`](thirdparty.json) lists selected third-party skills by source; their files are installed and updated by [`skills`](https://skills.sh/), not committed here.
+- [`scripts/apply`](scripts/apply) installs the desired set into Codex, Claude Code, and Pi. It refreshes owned skills, installs third-party skills only when missing, and leaves deletion explicit.
+
+## Apply
 
 ```bash
-./scripts/skills apply            # link skills into the runtime dirs
-./scripts/skills doctor           # health report (--remote checks upstreams)
-./scripts/skills update <skill>   # check upstream delta; --apply replaces a mirror, --record-review logs an owned review
-./scripts/skills verify [skill]   # run declared dependency checks (incl. reverse dependents)
-./scripts/skills list             # ownership, mirror mode, sources, dependencies
-./scripts/skills source inventory <source> --format json  # upstream facts only
-./scripts/skills source report [source] --format json      # cached policy decisions
+./scripts/apply --check        # validate desired state without changing runtime skills
+./scripts/apply                # install missing third-party and refresh owned
+./scripts/apply --update       # update selected third-party skills, then apply
+./scripts/apply --remove NAME  # explicitly remove a name no longer in desired state
 ```
 
-Operating rules for agents: [`AGENTS.md`](AGENTS.md).
+The script pins the tested installer as `skills@1.5.16`. Override only when intentionally testing a newer release:
 
-## Skills
+```bash
+AGENT_SKILLS_NPX_PACKAGE=skills@<version> ./scripts/apply
+```
 
-### Engineering
+## Maintenance
 
-Mirrors of [mattpocock/skills](https://github.com/mattpocock/skills):
+```bash
+npx --yes skills@1.5.16 add <source> --list       # discover source skills
+./scripts/apply --update                           # update selected third-party skills
+npx --yes skills@1.5.16 list --global --json      # inspect global state
+```
 
-- **[ask-matt](skills/thirdparty/ask-matt/SKILL.md)** — Router: ask which skill or flow fits your situation.
-- **[setup-matt-pocock-skills](skills/thirdparty/setup-matt-pocock-skills/SKILL.md)** — One-time setup for the engineering skills: issue tracker, triage labels, domain doc layout.
-- **[code-review](skills/thirdparty/code-review/SKILL.md)** — Review changes since a fixed point along two axes: repo standards and the originating spec.
-- **[codebase-design](skills/thirdparty/codebase-design/SKILL.md)** — Shared vocabulary for designing deep modules and finding deepening opportunities.
-- **[improve-codebase-architecture](skills/thirdparty/improve-codebase-architecture/SKILL.md)** — Scan a codebase for deepening opportunities, present an HTML report, grill through one.
-- **[diagnosing-bugs](skills/thirdparty/diagnosing-bugs/SKILL.md)** — Diagnosis loop for hard bugs and performance regressions.
-- **[domain-modeling](skills/thirdparty/domain-modeling/SKILL.md)** — Build and sharpen a project's domain model and ubiquitous language.
-- **[to-spec](skills/thirdparty/to-spec/SKILL.md)** — Turn the current conversation into a spec on the project issue tracker.
-- **[to-tickets](skills/thirdparty/to-tickets/SKILL.md)** — Break a plan or spec into tracer-bullet tickets with blocking edges.
-- **[implement](skills/thirdparty/implement/SKILL.md)** — Implement a piece of work from a spec or set of tickets.
-- **[tdd](skills/thirdparty/tdd/SKILL.md)** — Test-driven development: red-green-refactor, integration tests.
-- **[triage](skills/thirdparty/triage/SKILL.md)** — Move issues and external PRs through triage roles into agent-ready briefs.
-- **[wayfinder](skills/thirdparty/wayfinder/SKILL.md)** — Plan work too big for one session as a shared map of investigation tickets.
-- **[research](skills/thirdparty/research/SKILL.md)** — Investigate a question against primary sources; capture findings as Markdown in the repo.
-- **[prototype](skills/thirdparty/prototype/SKILL.md)** — Build a throwaway prototype to answer a design question.
-- **[resolving-merge-conflicts](skills/thirdparty/resolving-merge-conflicts/SKILL.md)** — Resolve an in-progress git merge/rebase conflict.
+To add or remove a third-party skill, edit `thirdparty.json` and apply on both computers. To add, edit, or remove an owned skill, change `skills/<name>/` and apply on both computers. Full operating rules are in [`AGENTS.md`](AGENTS.md).
 
-### Productivity
+## Scheduled updates
 
-Mirrors of [mattpocock/skills](https://github.com/mattpocock/skills):
+[`pievo/agent-skills-update.yaml`](pievo/agent-skills-update.yaml) runs the project workflow [`.pi/workflows/agent-skills-update.js`](.pi/workflows/agent-skills-update.js) daily at 07:00 Asia/Shanghai. It updates only selected third-party skills, synchronizes Macmini and MacBook, and reports upstream source inventory additions or removals without changing `thirdparty.json`.
 
-- **[grilling](skills/thirdparty/grilling/SKILL.md)** — Grill the user relentlessly to stress-test a plan or design.
-- **[grill-with-docs](skills/thirdparty/grill-with-docs/SKILL.md)** — Grilling that also builds docs (ADRs and glossary) as it goes.
-- **[handoff](skills/thirdparty/handoff/SKILL.md)** — Compact the current conversation into a handoff document for another agent.
-- **[teach](skills/thirdparty/teach/SKILL.md)** — Teach a new skill or concept within this workspace.
-- **[writing-great-skills](skills/thirdparty/writing-great-skills/SKILL.md)** — Reference for writing and editing predictable skills.
-
-### Planning & research
-
-- **[plan-refiner](skills/reasoning/plan-refiner/SKILL.md)** *(owned)* — Stress-test and refine a plan, roadmap, or next step before execution.
-- **[researcher](skills/thirdparty/researcher/SKILL.md)** *(mirror of [krzysztofdudek/ResearcherSkill](https://github.com/krzysztofdudek/ResearcherSkill))* — Optimize something measurable through repeated experiments toward a target metric.
-
-### Browser & search
-
-- **[playwright-cli](skills/thirdparty/playwright-cli/SKILL.md)** *(mirror of [microsoft/playwright-cli](https://github.com/microsoft/playwright-cli))* — Automate browser interactions and work with Playwright tests.
-- **[chatgpt](skills/chatgpt/SKILL.md)** *(owned; depends on playwright-cli)* — Drive ChatGPT web: model/reasoning selection, Projects, Deep Research, harvesting results.
-### Data science
-
-- **[kaggle](skills/datascience/kaggle/SKILL.md)** *(owned; depends on playwright-cli and the `kaggle` CLI)* — Kaggle competition operations: intake, validation design, leakage control, submissions.
-
-### Automation
-
-- **[pievo](skills/thirdparty/pievo/SKILL.md)** *(source-policy mirror of [kky42/pievo](https://github.com/kky42/pievo))* — Operate pievo, the durable loop runner, through its JSON CLI.
-
-The unregistered Pievo loop config at [`pievo/agent-skills-mirrors.yaml`](pievo/agent-skills-mirrors.yaml) schedules the `daily-driver`-only workflow at 07:00 Asia/Shanghai, at most once and $10 per day. It defaults to audit for the first trial; switch to live only after a successful audit. Registration/activation is intentionally manual.
+> With `skills` CLI 1.5.16, subcommand-level `--help` is not reliably read-only; `update --help`, for example, performs an update. Use top-level `npx --yes skills@1.5.16 --help` instead.

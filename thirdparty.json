@@ -1,0 +1,34 @@
+{
+  "kky42/pievo": [
+    "pievo"
+  ],
+  "krzysztofdudek/ResearcherSkill": [
+    "researcher"
+  ],
+  "mattpocock/skills": [
+    "ask-matt",
+    "code-review",
+    "codebase-design",
+    "diagnosing-bugs",
+    "domain-modeling",
+    "grill-with-docs",
+    "grilling",
+    "handoff",
+    "implement",
+    "improve-codebase-architecture",
+    "prototype",
+    "research",
+    "resolving-merge-conflicts",
+    "setup-matt-pocock-skills",
+    "tdd",
+    "teach",
+    "to-spec",
+    "to-tickets",
+    "triage",
+    "wayfinder",
+    "writing-great-skills"
+  ],
+  "microsoft/playwright-cli": [
+    "playwright-cli"
+  ]
+}

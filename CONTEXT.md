@@ -1,23 +1,14 @@
 # Skill Management
 
-## Language
+## Model
 
-**Mirror skill**: exact materialization of one authoritative upstream git directory. Local drift is an integrity error.
+This repository records intent, not third-party content.
 
-**Owned skill**: locally authoritative content, even when informed by external sources.
+- Files under `skills/` are locally owned.
+- `thirdparty.json` declares selected upstream skills.
+- `npx skills` owns installation, updates, its machine-local ledger, and runtime links.
+- Git synchronizes owned content and third-party selection between the MacBook and Macmini.
 
-**Source mirror**: governance mode where an agent discovers a whole source and decides which independent skills to include, exclude, or defer.
+## Decision
 
-**Skill mirror**: governance mode tracking one explicitly selected upstream skill; upstream removal is reported while the local copy is retained.
-
-**Content source / reference**: scoped external influence on an owned skill, reviewed selectively rather than merged.
-
-**Skill dependency / tool dependency**: runtime requirements represented by declared edges and verification commands. Textual references and reverse dependents must also be reviewed.
-
-**Decision cache**: `source-mirrors.json`, containing agent-made policy outcomes and supported commit/tree evidence. It is not an auto-sync specification.
-
-## Decisions
-
-**Local authority for owned skills** (2026-07-10): ownership has only `mirror` and `owned`. Owned skills never receive wholesale upstream trees.
-
-**Orthogonal mirror governance** (2026-07-11): source versus skill mirror describes discovery and selection, not ownership. Source-mirror agents inventory the whole source, apply documented policy, review security and dependency impact, then invoke deterministic CLI primitives. Skill mirrors retain/report when removed upstream. No directory heuristic or structural auto-sync algorithm makes policy decisions.
+**Thin desired-state repository** (2026-07-12): remove custom mirror materialization, hashes, source-policy caches, review receipts, dependency graphs, and runtime-link management. Keep one minimal third-party selection file and one thin reconciliation command. Agents make add/remove/security decisions and use standard `npx skills`, Git, and SSH operations to execute them.

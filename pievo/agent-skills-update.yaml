@@ -1,0 +1,17 @@
+version: 1
+name: agent-skills-update
+objective: Update selected global skills, detect upstream source inventory changes, and keep Macmini and MacBook synchronized.
+cwd: /Users/kky/dev/agent_skills
+cadence:
+  kind: cron
+  expr: "0 7 * * *"
+  timezone: Asia/Shanghai
+workflow:
+  name: agent-skills-update
+  args: {}
+  timeout: 120m
+quotas:
+  max_runs_per_day: 1
+  max_cost_usd_per_day: 5
+policy:
+  max_consecutive_errors: 3
