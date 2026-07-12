@@ -672,7 +672,7 @@ const {{readFileSync}}=require('node:fs');
 (async()=>{{
  const {{runWorkflow,ConcurrencyLimiter}}=await import({json.dumps(runtime.as_uri())});
  const source=readFileSync({json.dumps(str(REPO / '.pi/workflows/agent-skills-mirrors.js'))},'utf8');
- const path='/tmp/agent-skills-mirrors-worktrees/candidate-1', base='a'.repeat(40);
+ const path='/private/tmp/agent-skills-mirrors-worktrees/candidate-1', base='a'.repeat(40);
  const data=(commit=base)=>({{candidate_worktree:path,base_commit:base,candidate_commit:commit,primary_head:base,origin_main:base,primary_clean:true,added_skills:[],removed_skills:[],updated_skills:[],pending_updates:[],metadata_updates:[],rejected_updates:[],excluded_skills:[],deferred_skills:[],dependency_changes:[],validation:['ok'],warnings:[],human_actions:[],deployment:{{committed:false,pushed:false,macmini:'not-run',macbook:'not-run',cleanup:'not-confirmed'}}}});
  async function execute(kind){{let worker=0, reviews=0; const calls=[];
   const out=await runWorkflow(source,{{cwd:{json.dumps(str(REPO))},limiter:new ConcurrencyLimiter(2),replayEnabled:false,args:{{mode:'live'}},runAgent:async call=>{{

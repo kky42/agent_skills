@@ -16,8 +16,9 @@ const reviewerSession = "mirror-reviewer";
 const commitId = (value) => typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
 const safeWorktree = (value) => {
   if (typeof value !== "string") return false;
-  const prefix = tempParent + "/";
-  if (!value.startsWith(prefix)) return false;
+  const prefixes = [tempParent + "/", "/private" + tempParent + "/"];
+  const prefix = prefixes.find((item) => value.startsWith(item));
+  if (!prefix) return false;
   const basename = value.slice(prefix.length);
   return basename !== "." && basename !== ".." && /^[A-Za-z0-9._-]+$/.test(basename);
 };
