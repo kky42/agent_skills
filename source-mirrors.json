@@ -280,14 +280,14 @@
     "kky42/pievo": {
       "mode": "source",
       "policy": "Discover the whole source and include stable, general-purpose operational skills after security and dependency review; exclude repository-specific material and defer in-progress candidates.",
-      "resolvedCommit": "fd4b5b95f47b55c4aafa9ec206547656726306b1",
+      "resolvedCommit": "250d40f804e30d13c1f61aae330ec2dc2710b97c",
       "decisions": [
         {
           "name": "pievo",
           "path": "skills/pievo",
           "decision": "include",
           "reason": "Current source skill retained by initial policy.",
-          "treeHash": "sha256:18db0a386ed0d97ce46c1d9a5a06fbfe73fcd010bb8ddf9a79c7ecf19f07adf8"
+          "treeHash": "sha256:31df7053049eec0abdad4cf968f879a2f816625d421f3ab6fa825c99b16253eb"
         }
       ]
     },

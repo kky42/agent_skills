@@ -69,20 +69,39 @@ Unknown config keys are rejected at every level, and durations must use `<N>s|m|
 
 ```js
 export const meta = { name: "kb-update", description: "Keep the knowledge base current." };
-const output = await agent("Review recent changes and update the knowledge base.", { label: "update" });
+const result = await agent("Review recent changes, update the knowledge base, and verify the update.", {
+  label: "update",
+  schema: {
+    type: "object",
+    required: ["changed", "summary", "verified"],
+    properties: {
+      changed: { type: "boolean" },
+      summary: { type: "string" },
+      verified: { type: "boolean" }
+    }
+  }
+});
+if (!result.verified) throw new Error("knowledge-base update could not be verified");
 return {
   status: "complete",
-  message: output.slice(0, 200),
-  data: { raw_output: output },
+  message: result.summary,
+  data: {
+    changes: { made: result.changed },
+    external_effects: { verified: true },
+    attention: { required: false }
+  }
 };
 // Return `blocked` only for a verified, indispensable external action.
 // Throw for operational failures; use `complete` for safe checkpoints/no-ops.
 ```
 
-Workflow result rules:
+Workflow result guidance:
 
-- Put only `status`, `message`, and `data` at the top level. All domain fields and complete agent output belong in `data`.
-- Keep `message` brief and human-readable. For plain text, preserve the full output as `data.raw_output`; for schema-constrained structured output, return that object directly as `data`.
+- Put only `status`, `message`, and `data` at the top level. All domain fields belong in `data`.
+- Keep `message` to one short sentence that answers what happened and whether attention is needed.
+- Design `data` around the user's decision dimensions, not the workflow's agents or stages. Give each important question an explicit boolean or small status enum, followed by only the bounded evidence needed to trust it. Keep session IDs, scratch paths, review rounds, and cleanup mechanics out of the result unless they change a user decision or require action.
+- For plain text, use `data.raw_output` only when that text is itself the user-facing deliverable. For schema-constrained output, return a concise user-facing projection rather than exposing the workflow's internal coordination schema. If raw orchestration detail must remain inspectable, emit an explicit bounded `log()` entry; agent output is not logged automatically.
+- For recurring operational workflows, prefer making `data` answer: what changed, whether the intended external effects were verified, and whether indispensable human action is required. An explicit `attention.required` field must agree with top-level status: `true` only for `blocked`; optional warnings or a later automatic reconciliation remain `complete`. Prefer an aggregate field such as `all_targets_verified` plus per-target status over forcing operators to infer success from prose.
 
 ### Outcome semantics
 
